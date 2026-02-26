@@ -1,0 +1,69 @@
+
+> vendajastp-web@0.1.0 lint
+> eslint
+
+
+/Users/fdossantosnascimento/vendajastp-web/app/layout.tsx
+  21:15  error  Do not use an `<a>` element to navigate to `/`. Use `<Link />` from `next/link` instead. See: https://nextjs.org/docs/messages/no-html-link-for-pages  @next/next/no-html-link-for-pages
+
+/Users/fdossantosnascimento/vendajastp-web/app/lib/listings.ts
+  21:17  error  Unexpected any. Specify a different type  @typescript-eslint/no-explicit-any
+
+/Users/fdossantosnascimento/vendajastp-web/app/listings/page.tsx
+   27:5   error    Error: Calling setState synchronously within an effect can trigger cascading renders
+
+Effects are intended to synchronize state between React and external systems such as manually updating the DOM, state management libraries, or other platform APIs. In general, the body of an effect should do one or both of the following:
+* Update external systems with the latest state from React.
+* Subscribe for updates from some external system, calling setState in a callback function when external state changes.
+
+Calling setState synchronously within an effect body causes cascading renders that can hurt performance, and is not recommended. (https://react.dev/learn/you-might-not-need-an-effect).
+
+/Users/fdossantosnascimento/vendajastp-web/app/listings/page.tsx:27:5
+  25 |
+  26 |   useEffect(() => {
+> 27 |     setLoading(true);
+     |     ^^^^^^^^^^ Avoid calling setState() directly within an effect
+  28 |     fetchListings()
+  29 |       .then((data) => setListings(data))
+  30 |       .catch((e) => console.error(e))                                      react-hooks/set-state-in-effect
+   43:5   error    Error: Calling setState synchronously within an effect can trigger cascading renders
+
+Effects are intended to synchronize state between React and external systems such as manually updating the DOM, state management libraries, or other platform APIs. In general, the body of an effect should do one or both of the following:
+* Update external systems with the latest state from React.
+* Subscribe for updates from some external system, calling setState in a callback function when external state changes.
+
+Calling setState synchronously within an effect body causes cascading renders that can hurt performance, and is not recommended. (https://react.dev/learn/you-might-not-need-an-effect).
+
+/Users/fdossantosnascimento/vendajastp-web/app/listings/page.tsx:43:5
+  41 |     if (!newId) return;
+  42 |
+> 43 |     setHighlightId(newId);
+     |     ^^^^^^^^^^^^^^ Avoid calling setState() directly within an effect
+  44 |
+  45 |     const t1 = setTimeout(() => {
+  46 |       itemRefs.current[newId]?.scrollIntoView({ behavior: "smooth", block: "center" });  react-hooks/set-state-in-effect
+  167:19  warning  Using `<img>` could result in slower LCP and higher bandwidth. Consider using `<Image />` from `next/image` or a custom image loader to automatically optimize images. This may incur additional usage or cost from your provider. See: https://nextjs.org/docs/messages/no-img-element                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       @next/next/no-img-element
+
+/Users/fdossantosnascimento/vendajastp-web/app/new/page.tsx
+  154:15  warning  Using `<img>` could result in slower LCP and higher bandwidth. Consider using `<Image />` from `next/image` or a custom image loader to automatically optimize images. This may incur additional usage or cost from your provider. See: https://nextjs.org/docs/messages/no-img-element  @next/next/no-img-element
+
+/Users/fdossantosnascimento/vendajastp-web/app/providers.tsx
+  51:24  error  Error: Calling setState synchronously within an effect can trigger cascading renders
+
+Effects are intended to synchronize state between React and external systems such as manually updating the DOM, state management libraries, or other platform APIs. In general, the body of an effect should do one or both of the following:
+* Update external systems with the latest state from React.
+* Subscribe for updates from some external system, calling setState in a callback function when external state changes.
+
+Calling setState synchronously within an effect body causes cascading renders that can hurt performance, and is not recommended. (https://react.dev/learn/you-might-not-need-an-effect).
+
+/Users/fdossantosnascimento/vendajastp-web/app/providers.tsx:51:24
+  49 |     try {
+  50 |       const rawListings = localStorage.getItem(LISTINGS_KEY);
+> 51 |       if (rawListings) setListings(JSON.parse(rawListings));
+     |                        ^^^^^^^^^^^ Avoid calling setState() directly within an effect
+  52 |     } catch {}
+  53 |
+  54 |     try {  react-hooks/set-state-in-effect
+
+✖ 7 problems (5 errors, 2 warnings)
+
