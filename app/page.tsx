@@ -47,11 +47,11 @@ export default function HomePage() {
           <div className="grid grid-cols-2 gap-3">
             {CATEGORIES.map((cat) => (
               <Link
-                key={cat}
-                href={`/listings?cat=${encodeURIComponent(cat)}`}
+                key={cat.id}
+                href={`/listings?cat=${encodeURIComponent(cat.id)}`}
                 className="rounded-xl border px-3 py-2 text-sm font-semibold hover:bg-gray-50 transition"
               >
-                {cat}
+                {cat.label}
               </Link>
             ))}
           </div>

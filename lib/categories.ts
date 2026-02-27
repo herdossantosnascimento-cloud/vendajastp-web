@@ -15,3 +15,15 @@ export type Category = {
     { id: "real_estate", label: "Imóveis" },
     { id: "other", label: "Outros" },
   ];
+  
+  // ✅ FUNÇÃO PARA USO NO NEW/UI
+  export async function getCategories(): Promise<Category[]> {
+    return CATEGORIES;
+  }
+  
+  // ✅ FUNÇÃO PARA /me PAGE
+  export async function seedDefaultCategories() {
+    return {
+      skipped: false,
+    };
+  }

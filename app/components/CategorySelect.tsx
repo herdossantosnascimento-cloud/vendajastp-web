@@ -5,45 +5,42 @@ import type { Category } from "@/lib/categories";
 type Props = {
   label?: string;
   value: string;
-  onChange: (v: string) => void;
+  onChange: (value: string) => void;
   categories: Category[];
   placeholder?: string;
   disabled?: boolean;
 };
 
 export default function CategorySelect({
-  label = "Categoria",
+  label,
   value,
   onChange,
   categories,
-  placeholder = "Selecionar",
-  disabled,
+  placeholder = "Selecionar…",
+  disabled = false,
 }: Props) {
   return (
-    <div className="space-y-2">
-      <label className="block text-sm font-medium text-gray-900">{label}</label>
+    <label className="block">
+      {label ? (
+        <span className="text-sm font-semibold text-gray-800">
+          {label}
+        </span>
+      ) : null}
 
-      <div className="relative">
-        <select
-          value={value}
-          onChange={(e) => onChange(e.target.value)}
-          disabled={disabled}
-          className="w-full appearance-none rounded-xl border border-gray-200 bg-white px-3 py-2.5 pr-9 text-sm shadow-sm outline-none transition focus:border-gray-300 focus:ring-2 focus:ring-gray-200 disabled:bg-gray-50"
-        >
-          <option value="">{placeholder}</option>
-          {categories.map((c) => (
-            <option key={c.id} value={c.id}>
-              {c.name}
-            </option>
-          ))}
-        </select>
+      <select
+        className="mt-1 w-full rounded-xl border border-gray-200 bg-white px-4 py-3 text-sm outline-none focus:border-emerald-400 focus:ring-2 focus:ring-emerald-100 disabled:bg-gray-50"
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        disabled={disabled}
+      >
+        <option value="">{placeholder}</option>
 
-        <div className="pointer-events-none absolute inset-y-0 right-3 flex items-center text-gray-500">
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none">
-            <path d="M7 10l5 5 5-5" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
-          </svg>
-        </div>
-      </div>
-    </div>
+        {categories.map((c) => (
+          <option key={c.id} value={c.id}>
+            {c.label}
+          </option>
+        ))}
+      </select>
+    </label>
   );
 }

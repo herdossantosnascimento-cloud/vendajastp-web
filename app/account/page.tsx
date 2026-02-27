@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { CATEGORIES } from "../lib/categories";
+import { CATEGORIES } from "@/lib/categories";
 
 export default function HomePage() {
   return (
