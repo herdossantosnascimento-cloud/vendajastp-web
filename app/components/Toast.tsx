@@ -2,46 +2,49 @@
 
 import { useEffect } from "react";
 
-type ToastProps = {
-  open: boolean;
-  message: string;
-  type?: "success" | "error" | "info";
-  durationMs?: number;
-  onClose: () => void;
-};
+type ToastType = "success" | "error" | "info";
 
 export default function Toast({
   open,
+  type = "info",
   message,
-  type = "success",
-  durationMs = 2500,
   onClose,
-}: ToastProps) {
+}: {
+  open: boolean;
+  type?: ToastType;
+  message: any; // ✅ aceita qualquer coisa
+  onClose: () => void;
+}) {
+  // ✅ garante que é sempre string
+  const msg = String(message ?? "");
+
   useEffect(() => {
     if (!open) return;
-    const t = setTimeout(() => onClose(), durationMs);
+    const t = setTimeout(() => onClose(), 3500);
     return () => clearTimeout(t);
-  }, [open, durationMs, onClose]);
+  }, [open, onClose]);
 
   if (!open) return null;
 
   const base =
-    "fixed left-1/2 top-4 z-[9999] -translate-x-1/2 rounded-2xl px-4 py-3 text-sm font-semibold shadow-lg border";
+    "fixed bottom-4 left-1/2 z-[9999] w-[min(92vw,520px)] -translate-x-1/2 rounded-2xl border px-4 py-3 shadow-lg";
   const styles =
     type === "success"
-      ? "bg-emerald-50 text-emerald-800 border-emerald-200"
+      ? "border-emerald-200 bg-emerald-50 text-emerald-900"
       : type === "error"
-      ? "bg-red-50 text-red-800 border-red-200"
-      : "bg-slate-50 text-slate-800 border-slate-200";
+      ? "border-red-200 bg-red-50 text-red-900"
+      : "border-gray-200 bg-white text-gray-900";
 
   return (
     <div className={`${base} ${styles}`} role="status" aria-live="polite">
-      <div className="flex items-center gap-3">
-        <span>{message}</span>
+      <div className="flex items-start justify-between gap-3">
+        <div className="text-sm font-semibold whitespace-pre-wrap">
+          {msg || "Algo aconteceu…"}
+        </div>
+
         <button
-          type="button"
           onClick={onClose}
-          className="rounded-xl px-2 py-1 text-xs opacity-70 hover:opacity-100"
+          className="rounded-lg px-2 py-1 text-sm font-bold hover:bg-black/5"
           aria-label="Fechar"
         >
           ✕

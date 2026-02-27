@@ -1,19 +1,17 @@
-// Lista oficial de categorias do VendaJá STP
-// Esta lista será usada na homepage, no /new e nos filtros de /listings
+// lib/categories.ts
 
-export const CATEGORIES = [
-    "Veículos",
-    "Aluguer de Carros",
-    "Imóveis",
-    "Quartos & Arrendamento",
-    "Moda & Beleza",
-    "Serviços",
-    "Guest House & Turismo",
-    "Tecnologia",
-    "Casa & Mobiliário",
-    "Outros",
-    "Procuro",
-  ] as const;
+export type Category = {
+    id: string;
+    label: string;
+  };
   
-  // Tipo automático baseado na lista acima
-  export type Category = (typeof CATEGORIES)[number];
+  export const CATEGORIES: Category[] = [
+    { id: "electronics", label: "Eletrónica" },
+    { id: "vehicles", label: "Veículos" },
+    { id: "home", label: "Casa & Jardim" },
+    { id: "fashion", label: "Moda" },
+    { id: "services", label: "Serviços" },
+    { id: "jobs", label: "Empregos" },
+    { id: "real_estate", label: "Imóveis" },
+    { id: "other", label: "Outros" },
+  ];

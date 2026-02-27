@@ -21,9 +21,12 @@ export type UserDoc = {
 type AuthContextValue = {
   user: User | null;
   userData: UserDoc | null;
-  loading: boolean;
 
-  // ✅ o que o teu /login precisa
+  // compat (para páginas antigas que ainda usem estes nomes)
+  firebaseUser: User | null;
+  userDoc: UserDoc | null;
+
+  loading: boolean;
   loginWithGoogle: () => Promise<void>;
   logout: () => Promise<void>;
 };
@@ -35,14 +38,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [userData, setUserData] = useState<UserDoc | null>(null);
   const [loading, setLoading] = useState(true);
 
-  // guardar unsubscribe do onSnapshot para trocar corretamente
   const unsubUserRef = useRef<null | (() => void)>(null);
 
   useEffect(() => {
     const unsubAuth = onAuthStateChanged(auth, async (u) => {
       setUser(u);
 
-      // limpar listener anterior do userDoc
       if (unsubUserRef.current) {
         unsubUserRef.current();
         unsubUserRef.current = null;
@@ -56,25 +57,28 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
       setLoading(true);
 
-      // garantir que o doc do user existe (merge: true)
       const userRef = doc(db, "users", u.uid);
+
+      // cria/atualiza doc do user (não apaga dados existentes)
       await setDoc(
         userRef,
         {
           plan: "free",
-          freeListingsUsed: 0,
           createdAt: serverTimestamp(),
         },
         { merge: true }
       );
 
-      // ✅ realtime para atualizar contador e plano automaticamente
       unsubUserRef.current = onSnapshot(userRef, (snap) => {
-        if (!snap.exists()) {
-          setUserData({ plan: "free", freeListingsUsed: 0 });
-        } else {
-          setUserData(snap.data() as UserDoc);
-        }
+        const data = snap.exists() ? (snap.data() as any) : {};
+
+        setUserData({
+          plan: data.plan === "pro" ? "pro" : "free",
+          freeListingsUsed: Number(data.freeListingsUsed ?? 0),
+          whatsapp: data.whatsapp,
+          createdAt: data.createdAt,
+        });
+
         setLoading(false);
       });
     });
@@ -88,18 +92,20 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   async function loginWithGoogle() {
     const provider = new GoogleAuthProvider();
     await signInWithPopup(auth, provider);
-    // onAuthStateChanged vai tratar do resto
   }
 
   async function logout() {
     await signOut(auth);
-    // opcional: redirect é feito no teu Header (router.push("/"))
   }
 
-  const value = useMemo(
+  const value = useMemo<AuthContextValue>(
     () => ({
       user,
       userData,
+
+      firebaseUser: user,
+      userDoc: userData,
+
       loading,
       loginWithGoogle,
       logout,
@@ -112,6 +118,6 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
 export function useAuth() {
   const ctx = useContext(AuthContext);
-  if (!ctx) throw new Error("useAuth must be used inside <AuthProvider>");
+  if (!ctx) throw new Error("useAuth must be used inside <AuthProvider />");
   return ctx;
 }

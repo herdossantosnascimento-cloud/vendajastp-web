@@ -1,268 +1,162 @@
-"use client";
-
-import { db } from "./firebase";
 import {
+  addDoc,
   collection,
+  deleteDoc,
   doc,
   getDoc,
   getDocs,
-  query,
-  orderBy,
   limit as qLimit,
-  addDoc,
-  updateDoc,
-  runTransaction,
+  orderBy,
+  query,
   serverTimestamp,
-  increment,
+  updateDoc,
   where,
-  deleteDoc,
 } from "firebase/firestore";
-
-import { uploadListingImages } from "./storage";
-
-// Para apagar imagens (quando existirem imagePaths)
-import { ref, deleteObject } from "firebase/storage";
-import { storage } from "./firebase";
-
-export type UserPlan = "free" | "pro";
-export type Condition = "Novo" | "Usado";
-export type ServiceType = "Presencial" | "Online" | "Ambos";
+import { getDownloadURL, ref, uploadBytes } from "firebase/storage";
+import { db, storage } from "./firebase";
 
 export type Listing = {
   id: string;
-  ownerId: string;
 
   title: string;
-  price: string;
-  category: string;
-  location: string;
   description: string;
 
-  kind: "product" | "service";
-  condition?: Condition;
-  serviceType?: ServiceType;
+  price?: string;
+  category: string;
+  location: string;
 
-  images: string[];
+  kind?: "product" | "service";
+  condition?: string;
+  serviceType?: string;
 
-  // ✅ novo: caminhos no Storage (para conseguir apagar)
-  imagePaths?: string[];
+  imageUrl?: string;
+  images?: string[];
 
-  // ✅ opcional (para WhatsApp no futuro)
   whatsapp?: string;
 
+  ownerId: string;
   createdAt?: any;
-  status?: "active" | "inactive";
-  planAtCreation?: UserPlan;
 };
 
-function cleanUndefined<T extends Record<string, any>>(obj: T): Partial<T> {
-  const out: any = {};
-  Object.keys(obj).forEach((k) => {
-    if (obj[k] !== undefined) out[k] = obj[k];
-  });
-  return out;
+type CreateListingInput = {
+  uid: string;
+  plan: "free" | "pro";
+
+  title: string;
+  description: string;
+
+  price?: string;
+  category: string;
+  location: string;
+
+  kind?: "product" | "service";
+  condition?: string;
+  serviceType?: string;
+
+  whatsapp?: string;
+
+  files: File[];
+};
+
+export function normalizeWhatsApp(v: unknown) {
+  // mantém só dígitos, aceita +239… mas para wa.me deve ir sem "+"
+  const s = String(v ?? "").trim();
+  const digits = s.replace(/[^\d]/g, "");
+  return digits;
 }
 
 export async function fetchListings(opts?: { limit?: number }): Promise<Listing[]> {
-  const take = opts?.limit ?? 30;
+  const take = opts?.limit ?? 50;
 
-  const q = query(
-    collection(db, "listings"),
-    orderBy("createdAt", "desc"),
-    qLimit(take)
-  );
-
+  const q = query(collection(db, "listings"), orderBy("createdAt", "desc"), qLimit(take));
   const snap = await getDocs(q);
 
-  return snap.docs.map((d) => {
-    const data = d.data() as Omit<Listing, "id">;
-    return { id: d.id, ...data };
-  });
+  return snap.docs.map((d) => ({ id: d.id, ...(d.data() as Omit<Listing, "id">) }));
 }
 
 export async function fetchListingById(id: string): Promise<Listing | null> {
-  const refDoc = doc(db, "listings", id);
-  const snap = await getDoc(refDoc);
+  const snap = await getDoc(doc(db, "listings", id));
   if (!snap.exists()) return null;
-
-  const data = snap.data() as Omit<Listing, "id">;
-  return { id: snap.id, ...data };
+  return { id: snap.id, ...(snap.data() as Omit<Listing, "id">) };
 }
 
 export async function fetchMyListings(uid: string, opts?: { limit?: number }): Promise<Listing[]> {
   const take = opts?.limit ?? 50;
 
-  // where(ownerId == uid) + orderBy(createdAt desc)
-  const q = query(
-    collection(db, "listings"),
-    where("ownerId", "==", uid),
-    orderBy("createdAt", "desc"),
-    qLimit(take)
-  );
-
+  // ✅ sem orderBy => sem index
+  const q = query(collection(db, "listings"), where("ownerId", "==", uid), qLimit(take));
   const snap = await getDocs(q);
 
-  return snap.docs.map((d) => {
-    const data = d.data() as Omit<Listing, "id">;
-    return { id: d.id, ...data };
+  const items = snap.docs.map((d) => ({
+    id: d.id,
+    ...(d.data() as Omit<Listing, "id">),
+  })) as Listing[];
+
+  items.sort((a: any, b: any) => {
+    const as = a?.createdAt?.seconds ?? 0;
+    const bs = b?.createdAt?.seconds ?? 0;
+    return bs - as;
   });
+
+  return items;
 }
 
-export async function createListingWithPlanLimits(params: {
-  uid: string;
-  plan: UserPlan;
+export async function createListingWithPlanLimits(input: CreateListingInput) {
+  const maxPhotos = input.plan === "pro" ? 7 : 3;
 
-  title: string;
-  price: string;
-  category: string;
-  location: string;
-  description: string;
+  if (!input.uid) throw new Error("Precisas estar logado.");
+  if (!input.title?.trim()) throw new Error("Escreve um título.");
+  if (!input.category?.trim()) throw new Error("Seleciona uma categoria.");
+  if (!input.location?.trim()) throw new Error("Escreve a localização.");
+  if (!input.description?.trim()) throw new Error("Escreve a descrição.");
+  if (!input.files?.length) throw new Error("Adiciona pelo menos 1 foto.");
 
-  kind: "product" | "service";
-  condition?: Condition;
-  serviceType?: ServiceType;
+  const files = input.files.slice(0, maxPhotos);
 
-  files: File[];
+  const docRef = await addDoc(collection(db, "listings"), {
+    title: input.title.trim(),
+    description: input.description.trim(),
+    price: String(input.price ?? "").trim(),
+    category: input.category.trim(),
+    location: input.location.trim(),
+    kind: input.kind ?? "product",
+    condition: String(input.condition ?? "").trim(),
+    serviceType: String(input.serviceType ?? "").trim(),
 
-  // opcional
-  whatsapp?: string;
-}) {
-  const {
-    uid,
-    plan,
-    title,
-    price,
-    category,
-    location,
-    description,
-    kind,
-    condition,
-    serviceType,
-    files,
-    whatsapp,
-  } = params;
+    // ✅ força sempre string
+    whatsapp: String(input.whatsapp ?? "").trim(),
 
-  if (!uid) throw new Error("Utilizador não autenticado.");
-  if (!title?.trim()) throw new Error("Título obrigatório.");
-  if (!category?.trim()) throw new Error("Seleciona uma categoria.");
-  if (!location?.trim()) throw new Error("Localização obrigatória.");
-  if (!description?.trim()) throw new Error("Descrição obrigatória.");
-  if (!files || files.length === 0) throw new Error("Adiciona pelo menos 1 foto.");
-
-  const maxListingsFree = 2;
-  const maxFreePhotos = 3;
-  const maxProPhotos = 7;
-
-  const userRef = doc(db, "users", uid);
-
-  if (plan === "free") {
-    await runTransaction(db, async (tx) => {
-      const userSnap = await tx.get(userRef);
-      const used = Number(userSnap.data()?.freeListingsUsed ?? 0);
-
-      if (used >= maxListingsFree) {
-        throw new Error("Limite atingido: máximo 2 anúncios no plano Free.");
-      }
-      if (files.length > maxFreePhotos) {
-        throw new Error("Plano Free permite máximo 3 fotos.");
-      }
-    });
-  }
-
-  if (plan === "pro" && files.length > maxProPhotos) {
-    throw new Error("Plano Pro permite máximo 7 fotos.");
-  }
-
-  // ✅ Criar doc base (sem undefined)
-  const baseData = cleanUndefined({
-    ownerId: uid,
-    title: title.trim(),
-    price: price?.trim() ?? "",
-    category: category.trim(),
-    location: location.trim(),
-    description: description.trim(),
-    kind,
-    condition: kind === "product" ? (condition ?? "Novo") : undefined,
-    serviceType: kind === "service" ? (serviceType ?? "Ambos") : undefined,
-    whatsapp: whatsapp?.trim() || undefined,
-    images: [] as string[],
-    imagePaths: [] as string[],
-    status: "active" as const,
-    planAtCreation: plan,
+    ownerId: input.uid,
     createdAt: serverTimestamp(),
   });
 
-  const listingRef = await addDoc(collection(db, "listings"), baseData);
-  const listingId = listingRef.id;
+  const listingId = docRef.id;
 
-  // Upload fotos
-  const uploaded = await uploadListingImages({ uid, listingId, files });
-
-  // Atualizar doc com URLs + paths
-  await updateDoc(listingRef, {
-    images: uploaded.urls,
-    imagePaths: uploaded.paths,
-  });
-
-  // incrementar free
-  if (plan === "free") {
-    await runTransaction(db, async (tx) => {
-      tx.update(userRef, { freeListingsUsed: increment(1) });
-    });
+  const urls: string[] = [];
+  for (const file of files) {
+    const storageRef = ref(storage, `listings/${input.uid}/${listingId}/${file.name}`);
+    await uploadBytes(storageRef, file);
+    const url = await getDownloadURL(storageRef);
+    urls.push(url);
   }
 
-  return { listingId };
-}
-
-export async function updateListing(params: {
-  listingId: string;
-  uid: string; // segurança no client
-  patch: Partial<Pick<Listing, "title" | "price" | "category" | "location" | "description" | "status">>;
-}) {
-  const { listingId, uid, patch } = params;
-
-  const refDoc = doc(db, "listings", listingId);
-  const snap = await getDoc(refDoc);
-  if (!snap.exists()) throw new Error("Anúncio não encontrado.");
-
-  const data = snap.data() as any;
-  if (data.ownerId !== uid) throw new Error("Sem permissão para editar este anúncio.");
-
-  const cleaned = cleanUndefined({
-    title: patch.title?.trim(),
-    price: patch.price?.trim(),
-    category: patch.category?.trim(),
-    location: patch.location?.trim(),
-    description: patch.description?.trim(),
-    status: patch.status,
+  await updateDoc(doc(db, "listings", listingId), {
+    images: urls,
+    imageUrl: urls[0] ?? "",
   });
 
-  await updateDoc(refDoc, cleaned);
+  return { id: listingId, imageUrl: urls[0] ?? "", images: urls };
 }
 
-export async function deleteListing(params: {
-  listingId: string;
-  uid: string;
-}) {
-  const { listingId, uid } = params;
+export async function updateListing(id: string, data: Partial<Listing>) {
+  // ✅ garante que whatsapp nunca vai como number/undefined estranho
+  const safe: any = { ...data };
+  if ("whatsapp" in safe) safe.whatsapp = String(safe.whatsapp ?? "").trim();
+  if ("price" in safe) safe.price = String(safe.price ?? "").trim();
 
-  const refDoc = doc(db, "listings", listingId);
-  const snap = await getDoc(refDoc);
-  if (!snap.exists()) return;
+  await updateDoc(doc(db, "listings", id), safe);
+}
 
-  const data = snap.data() as any;
-  if (data.ownerId !== uid) throw new Error("Sem permissão para apagar este anúncio.");
-
-  // tentar apagar imagens se existir imagePaths
-  const paths: string[] = Array.isArray(data.imagePaths) ? data.imagePaths : [];
-
-  await deleteDoc(refDoc);
-
-  // apagar Storage (best-effort)
-  await Promise.allSettled(
-    paths.map(async (p) => {
-      const r = ref(storage, p);
-      await deleteObject(r);
-    })
-  );
+export async function deleteListing(id: string) {
+  await deleteDoc(doc(db, "listings", id));
 }
