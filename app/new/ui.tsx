@@ -5,7 +5,8 @@ import { useRouter } from "next/navigation";
 import Toast from "@/app/components/Toast";
 import { setNextToast } from "@/lib/toast-flag";
 import { createListingWithPlanLimits } from "@/lib/listings";
-import { CATEGORIES } from "@/lib/categories";
+import { CATEGORIES, getCategoryFields } from "@/lib/categories";
+import type { FieldDefinition } from "@/lib/categoryFields.types";
 import { useAuth } from "@/context/AuthContext";
 
 type Kind = "product" | "service";
@@ -42,6 +43,8 @@ export default function NewListingUI() {
   const [kind, setKind] = useState<Kind>("product");
   const [title, setTitle] = useState("");
   const [categoryId, setCategoryId] = useState(CATEGORIES[0]?.id ?? "");
+  const [categoryFieldsState, setCategoryFieldsState] = useState<Record<string, any>>({});
+  const categoryFields = useMemo(() => getCategoryFields(categoryId), [categoryId]);
   const [location, setLocation] = useState("");
   const [price, setPrice] = useState("");
   const [condition, setCondition] = useState<Condition>("Novo");
@@ -145,6 +148,7 @@ export default function NewListingUI() {
         condition: kind === "product" ? condition : undefined,
         serviceType: kind === "service" ? serviceType : undefined,
         whatsapp: wa,
+        categoryFields: categoryFieldsState,
         files,
       });
 

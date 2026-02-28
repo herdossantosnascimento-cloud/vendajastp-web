@@ -33,6 +33,13 @@ export type Listing = {
 
   whatsapp?: string;
 
+  categoryFields?: Record<string, any>;
+
+
+
+
+
+
   ownerId: string;
   createdAt?: any;
 };
@@ -53,6 +60,12 @@ type CreateListingInput = {
   serviceType?: string;
 
   whatsapp?: string;
+
+  categoryFields?: Record<string, any>;
+
+
+
+
 
   files: File[];
 };
@@ -136,6 +149,8 @@ export async function createListingWithPlanLimits(input: CreateListingInput) {
     condition: String(input.condition ?? "").trim(),
     serviceType: String(input.serviceType ?? "").trim(),
     whatsapp: String(input.whatsapp ?? "").trim(),
+
+    categoryFields: input.categoryFields ?? {},
 
     ownerId: input.uid,
     createdAt: serverTimestamp(),
