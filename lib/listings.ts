@@ -6,7 +6,6 @@ import {
   getDoc,
   getDocs,
   limit as qLimit,
-  orderBy,
   query,
   serverTimestamp,
   updateDoc,
@@ -59,19 +58,39 @@ type CreateListingInput = {
 };
 
 export function normalizeWhatsApp(v: unknown) {
-  // mantém só dígitos, aceita +239… mas para wa.me deve ir sem "+"
+  // mantém só dígitos; para wa.me deve ir sem "+"
   const s = String(v ?? "").trim();
   const digits = s.replace(/[^\d]/g, "");
   return digits;
 }
 
-export async function fetchListings(opts?: { limit?: number }): Promise<Listing[]> {
-  const take = opts?.limit ?? 50;
+function sortByCreatedAtDesc(items: Listing[]) {
+  items.sort((a: any, b: any) => {
+    const as = a?.createdAt?.seconds ?? 0;
+    const bs = b?.createdAt?.seconds ?? 0;
+    return bs - as;
+  });
+  return items;
+}
 
-  const q = query(collection(db, "listings"), orderBy("createdAt", "desc"), qLimit(take));
+// ✅ Agora aceita category opcional
+export async function fetchListings(opts?: { limit?: number; category?: string }): Promise<Listing[]> {
+  const take = opts?.limit ?? 50;
+  const cat = String(opts?.category ?? "").trim();
+
+  // ✅ sem orderBy para evitar índices
+  const q = cat
+    ? query(collection(db, "listings"), where("category", "==", cat), qLimit(take))
+    : query(collection(db, "listings"), qLimit(take));
+
   const snap = await getDocs(q);
 
-  return snap.docs.map((d) => ({ id: d.id, ...(d.data() as Omit<Listing, "id">) }));
+  const items = snap.docs.map((d) => ({
+    id: d.id,
+    ...(d.data() as Omit<Listing, "id">),
+  })) as Listing[];
+
+  return sortByCreatedAtDesc(items);
 }
 
 export async function fetchListingById(id: string): Promise<Listing | null> {
@@ -92,13 +111,7 @@ export async function fetchMyListings(uid: string, opts?: { limit?: number }): P
     ...(d.data() as Omit<Listing, "id">),
   })) as Listing[];
 
-  items.sort((a: any, b: any) => {
-    const as = a?.createdAt?.seconds ?? 0;
-    const bs = b?.createdAt?.seconds ?? 0;
-    return bs - as;
-  });
-
-  return items;
+  return sortByCreatedAtDesc(items);
 }
 
 export async function createListingWithPlanLimits(input: CreateListingInput) {
@@ -122,8 +135,6 @@ export async function createListingWithPlanLimits(input: CreateListingInput) {
     kind: input.kind ?? "product",
     condition: String(input.condition ?? "").trim(),
     serviceType: String(input.serviceType ?? "").trim(),
-
-    // ✅ força sempre string
     whatsapp: String(input.whatsapp ?? "").trim(),
 
     ownerId: input.uid,
@@ -149,7 +160,6 @@ export async function createListingWithPlanLimits(input: CreateListingInput) {
 }
 
 export async function updateListing(id: string, data: Partial<Listing>) {
-  // ✅ garante que whatsapp nunca vai como number/undefined estranho
   const safe: any = { ...data };
   if ("whatsapp" in safe) safe.whatsapp = String(safe.whatsapp ?? "").trim();
   if ("price" in safe) safe.price = String(safe.price ?? "").trim();
