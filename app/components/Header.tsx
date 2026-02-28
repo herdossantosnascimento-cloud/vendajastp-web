@@ -45,7 +45,7 @@ export default function Header() {
           <Link href="/plans" className={navClass("/plans")}>
             Planos
           </Link>
-          <Link href="/new" className={navClass("/new")}>
+          <Link href="/new" className="rounded-xl bg-red-600 px-3 py-2 text-sm font-semibold text-white hover:opacity-90">
             Publicar anúncio
           </Link>
         </nav>
@@ -89,7 +89,7 @@ export default function Header() {
         <Link href="/plans" className={navClass("/plans")}>
           Planos
         </Link>
-        <Link href="/new" className={navClass("/new")}>
+        <Link href="/new" className="rounded-xl bg-red-600 px-3 py-2 text-sm font-semibold text-white hover:opacity-90">
           Publicar
         </Link>
       </div>
