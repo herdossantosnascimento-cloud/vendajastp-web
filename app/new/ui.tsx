@@ -5,8 +5,8 @@ import { useRouter } from "next/navigation";
 import Toast from "@/app/components/Toast";
 import { setNextToast } from "@/lib/toast-flag";
 import { createListingWithPlanLimits } from "@/lib/listings";
-import { CATEGORIES, getCategoryFields } from "@/lib/categories";
 import type { FieldDefinition } from "@/lib/categoryFields.types";
+import { CATEGORIES, getCategoryFields } from "@/lib/categories";
 import { useAuth } from "@/context/AuthContext";
 
 type Kind = "product" | "service";
@@ -43,9 +43,10 @@ export default function NewListingUI() {
   const [kind, setKind] = useState<Kind>("product");
   const [title, setTitle] = useState("");
   const [categoryId, setCategoryId] = useState(CATEGORIES[0]?.id ?? "");
-  const [categoryFieldsState, setCategoryFieldsState] = useState<Record<string, any>>({});
   const categoryFields = useMemo(() => getCategoryFields(categoryId), [categoryId]);
   const [location, setLocation] = useState("");
+  const [dynamicValues, setDynamicValues] = useState<Record<string, any>>({});
+
   const [price, setPrice] = useState("");
   const [condition, setCondition] = useState<Condition>("Novo");
   const [serviceType, setServiceType] = useState<ServiceType>("Ambos");
@@ -148,7 +149,7 @@ export default function NewListingUI() {
         condition: kind === "product" ? condition : undefined,
         serviceType: kind === "service" ? serviceType : undefined,
         whatsapp: wa,
-        categoryFields: categoryFieldsState,
+        categoryFields: dynamicValues,
         files,
       });
 
@@ -165,6 +166,24 @@ export default function NewListingUI() {
   const inputBase =
     "mt-1 w-full rounded-xl border border-gray-200 bg-white px-4 py-3 text-sm outline-none " +
     "focus:border-emerald-400 focus:ring-2 focus:ring-emerald-100";
+  useEffect(() => {
+    if (!categoryId) {
+      setDynamicValues({});
+      return;
+    }
+
+    const fields = getCategoryFields(categoryId);
+
+    const allowed = new Set(fields.map((f) => f.name));
+    setDynamicValues((prev) => {
+      const next: Record<string, any> = {};
+      for (const k of Object.keys(prev)) {
+        if (allowed.has(k)) next[k] = prev[k];
+      }
+      return next;
+    });
+  }, [categoryId]);
+
 
   const labelBase = "text-sm font-semibold text-gray-800";
   const helpBase = "mt-1 text-xs text-gray-500";
@@ -276,6 +295,36 @@ export default function NewListingUI() {
                 />
                 <p className={helpBase}>Opcional. Se preencher, usa só números.</p>
               </label>
+
+
+              {categoryFields.length > 0 && categoryFields.map((field) => (
+                <label key={field.name} className="block">
+                  <span className={labelBase}>{field.label}</span>
+                  {field.type === "select" ? (
+                    <select
+                      className={inputBase}
+                      value={dynamicValues[field.name] ?? ""}
+                      onChange={(e) =>
+                        setDynamicValues((prev) => ({ ...prev, [field.name]: e.target.value }))
+                      }
+                    >
+                      <option value="">Selecionar</option>
+                      {(field.options ?? []).map((opt) => (
+                        <option key={typeof opt === "string" ? opt : opt.value} value={typeof opt === "string" ? opt : opt.value}>{typeof opt === "string" ? opt : opt.label}</option>
+                      ))}
+                    </select>
+                  ) : (
+                    <input
+                      className={inputBase}
+                      value={dynamicValues[field.name] ?? ""}
+                      onChange={(e) =>
+                        setDynamicValues((prev) => ({ ...prev, [field.name]: e.target.value }))
+                      }
+                      placeholder={field.placeholder ?? ""}
+                    />
+                  )}
+                </label>
+              ))}
 
               {kind === "product" ? (
                 <label className="block">
