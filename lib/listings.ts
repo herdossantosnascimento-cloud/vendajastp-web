@@ -16,6 +16,7 @@ import {
 import { getDownloadURL, ref, uploadBytes } from "firebase/storage";
 import { db, storage } from "./firebase";
 import { getPlanActiveLimit, getPlanDurationDays, type UserPlan } from "./planRules";
+import { markExpiredListingsIfNeeded } from "./listings/markExpiredListings";
 
 export type Listing = {
   id: string;
@@ -135,6 +136,8 @@ export async function fetchMyListings(uid: string, opts?: { limit?: number }): P
     ...(d.data() as Omit<Listing, "id">),
   })) as Listing[];
 
+  await markExpiredListingsIfNeeded(items).catch(() => 0);
+
   return sortByCreatedAtDesc(items);
 }
 
@@ -168,6 +171,10 @@ async function countActiveListingsForOwner(uid: string): Promise<number> {
   );
 
   const snap = await getDocs(q);
+
+  const items = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+  await markExpiredListingsIfNeeded(items).catch(() => 0);
+
 
   let count = 0;
   for (const d of snap.docs) {
