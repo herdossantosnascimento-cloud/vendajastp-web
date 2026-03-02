@@ -172,17 +172,13 @@ export default function NewListingUI() {
       return;
     }
 
-    const fields = getCategoryFields(categoryId);
 
-    const allowed = new Set(fields.map((f) => f.name));
-    setDynamicValues((prev) => {
       const next: Record<string, any> = {};
       for (const k of Object.keys(prev)) {
         if (allowed.has(k)) next[k] = prev[k];
       }
       return next;
     });
-  }, [categoryId]);
 
 
   const labelBase = "text-sm font-semibold text-gray-800";
@@ -305,7 +301,6 @@ export default function NewListingUI() {
                       className={inputBase}
                       value={dynamicValues[field.name] ?? ""}
                       onChange={(e) =>
-                        setDynamicValues((prev) => ({ ...prev, [field.name]: e.target.value }))
                       }
                     >
                       <option value="">Selecionar</option>
@@ -318,7 +313,6 @@ export default function NewListingUI() {
                       className={inputBase}
                       value={dynamicValues[field.name] ?? ""}
                       onChange={(e) =>
-                        setDynamicValues((prev) => ({ ...prev, [field.name]: e.target.value }))
                       }
                       placeholder={field.placeholder ?? ""}
                     />
