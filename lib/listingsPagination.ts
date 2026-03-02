@@ -1,4 +1,5 @@
 import {
+  Timestamp,
   collection,
   getDocs,
   limit as qLimit,
@@ -19,6 +20,25 @@ function sortByCreatedAtDesc(items: Listing[]) {
     return bs - as;
   });
   return items;
+}
+
+function isVisibleListing(listing: any): boolean {
+  if (listing?.status === "expired") return false;
+
+  const expiresAt = listing?.expiresAt;
+  if (!expiresAt) return true; // compat: anúncios antigos continuam válidos
+
+  const expDate: Date | null =
+    expiresAt instanceof Timestamp
+      ? expiresAt.toDate()
+      : typeof expiresAt?.toDate === "function"
+        ? expiresAt.toDate()
+        : expiresAt instanceof Date
+          ? expiresAt
+          : null;
+
+  if (!expDate) return true;
+  return expDate.getTime() > Date.now();
 }
 
 export type ListingsPageCursor = DocumentSnapshot | null;
@@ -58,5 +78,7 @@ export async function fetchListingsPage(opts?: {
 
   const nextCursor = snap.docs.length === take ? snap.docs[snap.docs.length - 1] : null;
 
-  return { items, nextCursor };
+  const visibleItems = items.filter(isVisibleListing);
+
+  return { items: visibleItems, nextCursor };
 }
