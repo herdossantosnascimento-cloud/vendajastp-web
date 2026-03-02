@@ -5,6 +5,7 @@ import { useEffect, useMemo, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import { fetchListings, Listing } from "@/lib/listings";
 import { CATEGORIES } from "@/lib/categories";
+import { fetchListingsPage, type ListingsPageCursor } from "@/lib/listingsPagination";
 
 function priceText(p?: string | number) {
   const s = String(p ?? "").trim();
@@ -62,26 +63,65 @@ export default function ListingsUI() {
   const [items, setItems] = useState<Listing[]>([]);
   const [loading, setLoading] = useState(true);
 
+  // paginação
+  const [cursor, setCursor] = useState<ListingsPageCursor>(null);
+  const [hasMore, setHasMore] = useState(false);
+  const [loadingMore, setLoadingMore] = useState(false);
+
   const title = useMemo(() => {
     if (!cat) return "Anúncios";
     return `Anúncios — ${categoryLabel(cat)}`;
   }, [cat]);
 
+  // Carregar primeira página quando muda categoria
   useEffect(() => {
     let alive = true;
+
     (async () => {
       try {
         setLoading(true);
-        const data = await fetchListings({ limit: 60, category: cat || undefined });
-        if (alive) setItems(data);
+        setItems([]);
+        setCursor(null);
+        setHasMore(false);
+
+        // Performance: carrega só a primeira página (12)
+        // Se Firestore exigir index (orderBy+where), fazemos fallback para o fetch antigo.
+        try {
+          const res = await fetchListingsPage({ pageSize: 12, category: cat || undefined, cursor: null });
+          if (!alive) return;
+          setItems(res.items);
+          setCursor(res.nextCursor);
+          setHasMore(Boolean(res.nextCursor));
+        } catch {
+          const data = await fetchListings({ limit: 60, category: cat || undefined });
+          if (!alive) return;
+          setItems(data);
+          setCursor(null);
+          setHasMore(false);
+        }
       } finally {
         if (alive) setLoading(false);
       }
     })();
+
     return () => {
       alive = false;
     };
   }, [cat]);
+
+  async function onLoadMore() {
+    if (loadingMore || !hasMore || !cursor) return;
+
+    setLoadingMore(true);
+    try {
+      const res = await fetchListingsPage({ pageSize: 12, category: cat || undefined, cursor });
+      setItems((prev) => [...prev, ...res.items]);
+      setCursor(res.nextCursor);
+      setHasMore(Boolean(res.nextCursor));
+    } finally {
+      setLoadingMore(false);
+    }
+  }
 
   if (loading) {
     return <div className="mx-auto max-w-6xl px-4 py-8 text-sm text-gray-600">A carregar…</div>;
@@ -123,11 +163,27 @@ export default function ListingsUI() {
           </div>
         </div>
       ) : (
-        <div className="grid grid-cols-2 gap-4 md:grid-cols-3 lg:grid-cols-4">
-          {items.map((it) => (
-            <ListingCard key={it.id} item={it} />
-          ))}
-        </div>
+        <>
+          <div className="grid grid-cols-2 gap-4 md:grid-cols-3 lg:grid-cols-4">
+            {items.map((it) => (
+              <ListingCard key={it.id} item={it} />
+            ))}
+          </div>
+
+          {/* Paginação: botão simples no fim (sem mexer no layout existente, só acrescenta) */}
+          {hasMore ? (
+            <div className="mt-6 flex justify-center">
+              <button
+                type="button"
+                onClick={onLoadMore}
+                disabled={loadingMore}
+                className="rounded-xl border border-gray-200 bg-white px-4 py-2 text-sm font-semibold hover:bg-gray-50 disabled:opacity-60"
+              >
+                {loadingMore ? "A carregar…" : "Ver mais"}
+              </button>
+            </div>
+          ) : null}
+        </>
       )}
     </div>
   );
