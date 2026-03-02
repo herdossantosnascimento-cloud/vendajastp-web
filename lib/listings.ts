@@ -1,4 +1,5 @@
 import {
+  Timestamp,
   addDoc,
   collection,
   deleteDoc,
@@ -6,6 +7,7 @@ import {
   getDoc,
   getDocs,
   limit as qLimit,
+  orderBy,
   query,
   serverTimestamp,
   updateDoc,
@@ -13,6 +15,7 @@ import {
 } from "firebase/firestore";
 import { getDownloadURL, ref, uploadBytes } from "firebase/storage";
 import { db, storage } from "./firebase";
+import { getPlanActiveLimit, getPlanDurationDays, type UserPlan } from "./planRules";
 
 export type Listing = {
   id: string;
@@ -46,7 +49,7 @@ export type Listing = {
 
 type CreateListingInput = {
   uid: string;
-  plan: "free" | "pro";
+  plan: "free" | "pro" | "monthly" | "annual";
 
   title: string;
   description: string;
@@ -69,6 +72,14 @@ type CreateListingInput = {
 
   files: File[];
 };
+
+function normalizePlan(plan: CreateListingInput["plan"]): UserPlan {
+  // compat: o app hoje usa "pro". Por agora mapeamos para mensal.
+  if (plan === "pro") return "monthly";
+  if (plan === "monthly" || plan === "annual" || plan === "free") return plan;
+  return "free";
+}
+
 
 export function normalizeWhatsApp(v: unknown) {
   // mantém só dígitos; para wa.me deve ir sem "+"
@@ -127,8 +138,51 @@ export async function fetchMyListings(uid: string, opts?: { limit?: number }): P
   return sortByCreatedAtDesc(items);
 }
 
+function isActiveAndNotExpired(data: any, now: Date): boolean {
+  if (data?.status === "expired") return false;
+
+  const expiresAt = data?.expiresAt;
+  if (!expiresAt) return true; // compat: anúncios antigos continuam válidos
+
+  const expDate: Date | null =
+    expiresAt instanceof Timestamp
+      ? expiresAt.toDate()
+      : typeof expiresAt?.toDate === "function"
+        ? expiresAt.toDate()
+        : expiresAt instanceof Date
+          ? expiresAt
+          : null;
+
+  if (!expDate) return true;
+  return expDate.getTime() > now.getTime();
+}
+
+async function countActiveListingsForOwner(uid: string): Promise<number> {
+  const now = new Date();
+
+  // Nota: usamos orderBy para ter resultados consistentes; pode pedir index dependendo do Firestore.
+  const q = query(
+    collection(db, "listings"),
+    where("ownerId", "==", uid),
+    orderBy("createdAt", "desc"),
+    qLimit(100)
+  );
+
+  const snap = await getDocs(q);
+
+  let count = 0;
+  for (const d of snap.docs) {
+    const data = d.data();
+    if (isActiveAndNotExpired(data, now)) count += 1;
+  }
+
+  return count;
+}
+
 export async function createListingWithPlanLimits(input: CreateListingInput) {
   const maxPhotos = input.plan === "pro" ? 7 : 3;
+  const plan = normalizePlan(input.plan);
+
 
   if (!input.uid) throw new Error("Precisas estar logado.");
   if (!input.title?.trim()) throw new Error("Escreve um título.");
@@ -136,6 +190,18 @@ export async function createListingWithPlanLimits(input: CreateListingInput) {
   if (!input.location?.trim()) throw new Error("Escreve a localização.");
   if (!input.description?.trim()) throw new Error("Escreve a descrição.");
   if (!input.files?.length) throw new Error("Adiciona pelo menos 1 foto.");
+
+  // ✅ Limite FREE: máximo 3 anúncios ativos
+  if (plan === "free") {
+    const activeCount = await countActiveListingsForOwner(input.uid);
+    if (activeCount >= getPlanActiveLimit(plan)) {
+      throw new Error("Plano FREE: máximo 3 anúncios ativos.");
+    }
+  }
+
+  const expiresAt = Timestamp.fromDate(
+    new Date(Date.now() + getPlanDurationDays(plan) * 24 * 60 * 60 * 1000)
+  );
 
   const files = input.files.slice(0, maxPhotos);
 
@@ -154,6 +220,10 @@ export async function createListingWithPlanLimits(input: CreateListingInput) {
 
     ownerId: input.uid,
     createdAt: serverTimestamp(),
+
+    plan,
+    status: "active",
+    expiresAt,
   });
 
   const listingId = docRef.id;
