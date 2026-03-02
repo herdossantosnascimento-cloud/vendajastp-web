@@ -309,7 +309,7 @@ export default function NewListingUI() {
                       }
                     >
                       <option value="">Selecionar</option>
-                      {(field.options ?? []).map((opt) => (
+                      {("options" in field ? field.options : []).map((opt) => (
                         <option key={typeof opt === "string" ? opt : opt.value} value={typeof opt === "string" ? opt : opt.value}>{typeof opt === "string" ? opt : opt.label}</option>
                       ))}
                     </select>

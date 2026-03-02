@@ -1,15 +1,16 @@
 import { redirect } from "next/navigation";
 
-export default function CategoryRedirectPage({
-  params,
-}: {
-  params: { id: string };
-}) {
-  const id = String(params?.id ?? "").trim();
+type Props = {
+  params: Promise<{ id: string }>;
+};
 
-  if (!id) {
+export default async function CategoryRedirectPage({ params }: Props) {
+  const { id } = await params;
+  const cleanId = String(id ?? "").trim();
+
+  if (!cleanId) {
     redirect("/listings");
   }
 
-  redirect(`/listings?cat=${encodeURIComponent(id)}`);
+  redirect(`/listings?cat=${encodeURIComponent(cleanId)}`);
 }
