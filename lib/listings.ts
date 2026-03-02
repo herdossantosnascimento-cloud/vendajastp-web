@@ -164,7 +164,6 @@ async function countActiveListingsForOwner(uid: string): Promise<number> {
   const q = query(
     collection(db, "listings"),
     where("ownerId", "==", uid),
-    orderBy("createdAt", "desc"),
     qLimit(100)
   );
 
