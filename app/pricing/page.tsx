@@ -27,7 +27,7 @@ export default function PricingPage() {
         {/* FREE */}
         <div className="rounded-3xl border border-gray-200 bg-white p-8 shadow-sm">
           <h2 className="text-xl font-bold">FREE</h2>
-          <p className="mt-4 text-4xl font-extrabold">0€</p>
+          <p className="mt-4 text-4xl font-extrabold">0 Db</p>
 
           <ul className="mt-6 space-y-3 text-sm text-gray-600">
             <li>✔ 3 anúncios ativos</li>
@@ -47,8 +47,13 @@ export default function PricingPage() {
           </div>
 
           <h2 className="text-xl font-bold text-emerald-600">PRO Mensal</h2>
-          <p className="mt-4 text-4xl font-extrabold">5€</p>
-          <p className="text-sm text-gray-500">por mês</p>
+          <div className="mt-4">
+            <span className="text-4xl font-extrabold">200 Db</span>
+          </div>
+
+          <p className="text-sm text-gray-500 mt-1">
+            ≈ 8€ / mês
+          </p>
 
           <ul className="mt-6 space-y-3 text-sm text-gray-700">
             <li>✔ 7 anúncios ativos</li>
@@ -57,9 +62,7 @@ export default function PricingPage() {
             <li>✔ Renovação automática</li>
           </ul>
 
-          <button className="mt-8 w-full rounded-xl bg-emerald-500 py-3 text-sm font-semibold text-white hover:bg-emerald-600 transition">
-            Assinar Mensal
-          </button>
+          <a href="/payment/select?plan=monthly" className="mt-8 block w-full rounded-xl bg-emerald-500 py-3 text-center text-sm font-semibold text-white hover:bg-emerald-600 transition">Assinar Mensal</a>
         </div>
 
         {/* PRO Anual - MELHOR VALOR */}
@@ -71,24 +74,22 @@ export default function PricingPage() {
           <h2 className="text-xl font-bold text-emerald-700">PRO Anual</h2>
 
           <div className="mt-4">
-            <span className="mr-2 text-gray-400 line-through">60€</span>
-            <span className="text-4xl font-extrabold">50€</span>
+            <span className="mr-2 text-gray-400 line-through">2400 Db</span>
+            <span className="text-4xl font-extrabold">1500 Db</span>
             <span className="ml-2 text-sm text-gray-500">por ano</span>
           </div>
 
-          <p className="mt-1 text-sm font-semibold text-emerald-700">Poupa 10€ por ano</p>
+          <p className="mt-1 text-sm font-semibold text-emerald-700">Poupa 900 Db por ano</p>
 
           <ul className="mt-6 space-y-3 text-sm text-gray-700">
-            <li>✔ 7 anúncios ativos</li>
+            <li>✔ 12 anúncios ativos</li>
             <li>✔ 7 fotos por anúncio</li>
-            <li>✔ Melhor preço anual</li>
-            <li>✔ Prioridade no suporte</li>
-            <li>✔ Maior destaque na plataforma</li>
+            <li>⭐ Destaque prioritário</li>
+            <li>⭐ Badge especial PRO</li>
+            <li>⭐ Renovação automática anual</li>
           </ul>
 
-          <button className="mt-8 w-full rounded-xl bg-emerald-700 py-3 text-sm font-semibold text-white hover:bg-emerald-800 transition">
-            Assinar Anual
-          </button>
+          <a href="/payment/select?plan=annual" className="mt-8 block w-full rounded-xl bg-emerald-700 py-3 text-center text-sm font-semibold text-white hover:bg-emerald-800 transition">Assinar Anual</a>
         </div>
       </div>
     </div>
