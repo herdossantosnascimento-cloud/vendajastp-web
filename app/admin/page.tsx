@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { collection, getDocs, limit, query } from "firebase/firestore";
+import { collection, getDocs, limit, query, where, orderBy, Timestamp } from "firebase/firestore";
 import { db } from "@/lib/firebase";
 import { useAuth } from "@/context/AuthContext";
 import { isAdminEmail } from "@/lib/admin/isAdmin";
@@ -19,7 +19,7 @@ export default function AdminPage() {
 
   async function loadListings() {
     setMsg("");
-    const q = query(collection(db, "listings"), limit(50));
+    const q = query(collection(db, "listings"), where("status","==","active"), where("expiresAt", ">", Timestamp.now()), orderBy("expiresAt","asc"), limit(50));
     const snap = await getDocs(q);
     const data = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
     setItems(data);

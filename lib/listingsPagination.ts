@@ -54,9 +54,13 @@ export async function fetchListingsPage(opts?: {
 
   // ⚠️ Paginação real precisa de ordem estável.
   // Usamos createdAt desc (pode pedir index no Firestore se combinar com where(category == ...)).
+  const now = Timestamp.now();
+
   const baseParts: any[] = [
+    where("status", "==", "active"),
+    where("expiresAt", ">", now),
     ...(cat ? [where("category", "==", cat)] : []),
-    orderBy("createdAt", "desc"),
+    orderBy("expiresAt", "asc"),
     qLimit(take),
   ];
 

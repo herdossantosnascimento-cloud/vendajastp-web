@@ -5,7 +5,7 @@ import { useRouter } from "next/navigation";
 import Toast from "@/app/components/Toast";
 import { setNextToast } from "@/lib/toast-flag";
 import { createListingWithPlanLimits } from "@/lib/listings";
-import type { FieldDefinition } from "@/lib/categoryFields.types";
+import { isFreeLimitError } from "@/lib/handlePlanError";
 import { CATEGORIES, getCategoryFields } from "@/lib/categories";
 import { useAuth } from "@/context/AuthContext";
 
@@ -26,8 +26,7 @@ export default function NewListingUI() {
 
   const authAny = useAuth() as any;
   const user = authAny?.user ?? authAny?.currentUser ?? authAny?.firebaseUser ?? null;
-  const userDoc =
-    authAny?.userData ?? authAny?.userDoc ?? authAny?.dbUser ?? authAny?.profile ?? null;
+  const userDoc = authAny?.userData ?? authAny?.userDoc ?? authAny?.dbUser ?? authAny?.profile ?? null;
 
   const plan: "free" | "pro" = userDoc?.plan === "pro" ? "pro" : "free";
   const maxPhotos = plan === "pro" ? 7 : 3;
@@ -73,6 +72,25 @@ export default function NewListingUI() {
     setPreviews(urls);
     return () => urls.forEach((u) => URL.revokeObjectURL(u));
   }, [files]);
+
+  // Allowed dynamic field keys for current category
+  const allowed = useMemo(() => new Set(categoryFields.map((f: any) => f.name)), [categoryFields]);
+
+  // When category changes, drop any dynamicValues keys that are not allowed for that category
+  useEffect(() => {
+    if (!categoryId) {
+      setDynamicValues({});
+      return;
+    }
+
+    setDynamicValues((prev) => {
+      const next: Record<string, any> = {};
+      for (const k of Object.keys(prev)) {
+        if (allowed.has(k)) next[k] = prev[k];
+      }
+      return next;
+    });
+  }, [categoryId, allowed]);
 
   function showError(msg: string) {
     setToastType("error");
@@ -157,7 +175,17 @@ export default function NewListingUI() {
       router.push("/listings");
       router.refresh();
     } catch (err: any) {
-      showError(err?.message ?? "Erro ao publicar anúncio.");
+      const msg = String(err?.message ?? "");
+      const lower = msg.toLowerCase();
+
+      // ✅ Se bater no limite FREE -> redireciona para /pricing?reason=upgrade
+      if (isFreeLimitError(err)) {
+        setNextToast("Chegaste ao limite do plano FREE. Escolhe um plano para continuar.", "info");
+        router.replace("/pricing?reason=upgrade");
+        return;
+      }
+
+      showError(msg || "Erro ao publicar anúncio.");
     } finally {
       setSubmitting(false);
     }
@@ -166,21 +194,6 @@ export default function NewListingUI() {
   const inputBase =
     "mt-1 w-full rounded-xl border border-gray-200 bg-white px-4 py-3 text-sm outline-none " +
     "focus:border-emerald-400 focus:ring-2 focus:ring-emerald-100";
-  useEffect(() => {
-    if (!categoryId) {
-      setDynamicValues({});
-      return;
-    }
-
-
-      const next: Record<string, any> = {};
-      for (const k of Object.keys(prev)) {
-        if (allowed.has(k)) next[k] = prev[k];
-      }
-      return next;
-    });
-
-
   const labelBase = "text-sm font-semibold text-gray-800";
   const helpBase = "mt-1 text-xs text-gray-500";
 
@@ -192,9 +205,7 @@ export default function NewListingUI() {
         {/* Header */}
         <div className="mb-6 rounded-2xl border border-gray-200 bg-white p-5 shadow-sm">
           <h1 className="text-2xl font-extrabold tracking-tight">Publicar anúncio</h1>
-          <p className="mt-1 text-sm text-gray-600">
-            Preenche com calma para o anúncio ficar claro e profissional.
-          </p>
+          <p className="mt-1 text-sm text-gray-600">Preenche com calma para o anúncio ficar claro e profissional.</p>
 
           <div className="mt-3 flex flex-wrap items-center gap-2 text-sm text-gray-600">
             <span className="rounded-full border bg-white px-3 py-1">
@@ -263,7 +274,7 @@ export default function NewListingUI() {
               <label className="block">
                 <span className={labelBase}>Categoria *</span>
                 <select className={inputBase} value={categoryId} onChange={(e) => setCategoryId(e.target.value)}>
-                  {CATEGORIES.map((c) => (
+                  {CATEGORIES.map((c: any) => (
                     <option key={c.id} value={c.id}>
                       {c.label}
                     </option>
@@ -283,42 +294,42 @@ export default function NewListingUI() {
 
               <label className="block">
                 <span className={labelBase}>Preço</span>
-                <input
-                  className={inputBase}
-                  value={price}
-                  onChange={(e) => setPrice(e.target.value)}
-                  placeholder="Ex: 1500"
-                />
+                <input className={inputBase} value={price} onChange={(e) => setPrice(e.target.value)} placeholder="Ex: 1500" />
                 <p className={helpBase}>Opcional. Se preencher, usa só números.</p>
               </label>
 
+              {categoryFields.length > 0 &&
+                categoryFields.map((field: any) => (
+                  <label key={field.name} className="block">
+                    <span className={labelBase}>{field.label}</span>
 
-              {categoryFields.length > 0 && categoryFields.map((field) => (
-                <label key={field.name} className="block">
-                  <span className={labelBase}>{field.label}</span>
-                  {field.type === "select" ? (
-                    <select
-                      className={inputBase}
-                      value={dynamicValues[field.name] ?? ""}
-                      onChange={(e) =>
-                      }
-                    >
-                      <option value="">Selecionar</option>
-                      {("options" in field ? field.options : []).map((opt) => (
-                        <option key={typeof opt === "string" ? opt : opt.value} value={typeof opt === "string" ? opt : opt.value}>{typeof opt === "string" ? opt : opt.label}</option>
-                      ))}
-                    </select>
-                  ) : (
-                    <input
-                      className={inputBase}
-                      value={dynamicValues[field.name] ?? ""}
-                      onChange={(e) =>
-                      }
-                      placeholder={field.placeholder ?? ""}
-                    />
-                  )}
-                </label>
-              ))}
+                    {field.type === "select" ? (
+                      <select
+                        className={inputBase}
+                        value={dynamicValues[field.name] ?? ""}
+                        onChange={(e) => setDynamicValues((prev) => ({ ...prev, [field.name]: e.target.value }))}
+                      >
+                        <option value="">Selecionar</option>
+                        {(field.options ?? []).map((opt: any) => {
+                          const value = typeof opt === "string" ? opt : opt.value;
+                          const label = typeof opt === "string" ? opt : opt.label;
+                          return (
+                            <option key={value} value={value}>
+                              {label}
+                            </option>
+                          );
+                        })}
+                      </select>
+                    ) : (
+                      <input
+                        className={inputBase}
+                        value={dynamicValues[field.name] ?? ""}
+                        onChange={(e) => setDynamicValues((prev) => ({ ...prev, [field.name]: e.target.value }))}
+                        placeholder={field.placeholder ?? ""}
+                      />
+                    )}
+                  </label>
+                ))}
 
               {kind === "product" ? (
                 <label className="block">
@@ -331,11 +342,7 @@ export default function NewListingUI() {
               ) : (
                 <label className="block">
                   <span className={labelBase}>Tipo de serviço *</span>
-                  <select
-                    className={inputBase}
-                    value={serviceType}
-                    onChange={(e) => setServiceType(e.target.value as ServiceType)}
-                  >
+                  <select className={inputBase} value={serviceType} onChange={(e) => setServiceType(e.target.value as ServiceType)}>
                     <option value="Presencial">Presencial</option>
                     <option value="Online">Online</option>
                     <option value="Ambos">Ambos</option>
@@ -364,7 +371,6 @@ export default function NewListingUI() {
                 <p className={helpBase}>Com indicativo. Vamos criar o link automaticamente.</p>
               </label>
 
-              {/* Debug opcional: ownerId */}
               <div className="md:col-span-2 rounded-xl border border-gray-200 bg-gray-50 p-3 text-xs text-gray-700">
                 <b>Owner (debug):</b> {user?.uid ?? "— (não logado)"}
               </div>
@@ -375,18 +381,10 @@ export default function NewListingUI() {
           <section className="rounded-2xl border border-gray-200 bg-white p-5 shadow-sm">
             <div className="mb-2">
               <div className="text-sm font-bold text-gray-900">Fotos *</div>
-              <div className="text-xs text-gray-500">
-                Máximo {maxPhotos}. A 1ª foto é a capa. Podes mudar a ordem.
-              </div>
+              <div className="text-xs text-gray-500">Máximo {maxPhotos}. A 1ª foto é a capa. Podes mudar a ordem.</div>
             </div>
 
-            <input
-              type="file"
-              accept="image/*"
-              multiple
-              onChange={(e) => onPickFiles(e.target.files)}
-              className="block w-full text-sm"
-            />
+            <input type="file" accept="image/*" multiple onChange={(e) => onPickFiles(e.target.files)} className="block w-full text-sm" />
 
             {previews.length > 0 ? (
               <div className="mt-4 grid grid-cols-2 gap-3 md:grid-cols-3">
@@ -398,9 +396,7 @@ export default function NewListingUI() {
                     </div>
 
                     <div className="flex items-center justify-between gap-2 p-2">
-                      <div className="text-xs font-semibold text-gray-700">
-                        {idx === 0 ? "Capa" : `Foto ${idx + 1}`}
-                      </div>
+                      <div className="text-xs font-semibold text-gray-700">{idx === 0 ? "Capa" : `Foto ${idx + 1}`}</div>
                       <div className="flex gap-1">
                         <button
                           type="button"
@@ -418,11 +414,7 @@ export default function NewListingUI() {
                         >
                           ↓
                         </button>
-                        <button
-                          type="button"
-                          onClick={() => removeFile(idx)}
-                          className="rounded-lg border px-2 py-1 text-xs hover:bg-gray-50"
-                        >
+                        <button type="button" onClick={() => removeFile(idx)} className="rounded-lg border px-2 py-1 text-xs hover:bg-gray-50">
                           Remover
                         </button>
                       </div>
