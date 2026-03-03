@@ -7,7 +7,6 @@ import {
   getDoc,
   getDocs,
   limit as qLimit,
-  orderBy,
   query,
   serverTimestamp,
   updateDoc,
@@ -16,6 +15,7 @@ import {
 import { getDownloadURL, ref, uploadBytes } from "firebase/storage";
 import { db, storage } from "./firebase";
 import { getPlanActiveLimit, getPlanDurationDays, type UserPlan } from "./planRules";
+import { AppError } from "./errors";
 import { markExpiredListingsIfNeeded } from "./listings/markExpiredListings";
 
 export type Listing = {
@@ -39,19 +39,14 @@ export type Listing = {
 
   categoryFields?: Record<string, any>;
 
-
-
-
-
-
   ownerId: string;
   createdAt?: any;
 };
 
 type CreateListingInput = {
   uid: string;
-  plan: "free" | "pro" | "monthly" | "annual";
-
+  // ✅ novo: sem "pro"
+  plan: "free" | "monthly" | "annual" | "pro"; // deixei "pro" aqui só para compat caso algum sítio antigo ainda envie
   title: string;
   description: string;
 
@@ -64,26 +59,19 @@ type CreateListingInput = {
   serviceType?: string;
 
   whatsapp?: string;
-
   categoryFields?: Record<string, any>;
-
-
-
-
 
   files: File[];
 };
 
 function normalizePlan(plan: CreateListingInput["plan"]): UserPlan {
-  // compat: o app hoje usa "pro". Por agora mapeamos para mensal.
+  // compat: se ainda vier "pro", mapeia para mensal
   if (plan === "pro") return "monthly";
   if (plan === "monthly" || plan === "annual" || plan === "free") return plan;
   return "free";
 }
 
-
 export function normalizeWhatsApp(v: unknown) {
-  // mantém só dígitos; para wa.me deve ir sem "+"
   const s = String(v ?? "").trim();
   const digits = s.replace(/[^\d]/g, "");
   return digits;
@@ -98,12 +86,10 @@ function sortByCreatedAtDesc(items: Listing[]) {
   return items;
 }
 
-// ✅ Agora aceita category opcional
 export async function fetchListings(opts?: { limit?: number; category?: string }): Promise<Listing[]> {
   const take = opts?.limit ?? 50;
   const cat = String(opts?.category ?? "").trim();
 
-  // ✅ sem orderBy para evitar índices
   const q = cat
     ? query(collection(db, "listings"), where("category", "==", cat), qLimit(take))
     : query(collection(db, "listings"), qLimit(take));
@@ -127,7 +113,6 @@ export async function fetchListingById(id: string): Promise<Listing | null> {
 export async function fetchMyListings(uid: string, opts?: { limit?: number }): Promise<Listing[]> {
   const take = opts?.limit ?? 50;
 
-  // ✅ sem orderBy => sem index
   const q = query(collection(db, "listings"), where("ownerId", "==", uid), qLimit(take));
   const snap = await getDocs(q);
 
@@ -145,7 +130,7 @@ function isActiveAndNotExpired(data: any, now: Date): boolean {
   if (data?.status === "expired") return false;
 
   const expiresAt = data?.expiresAt;
-  if (!expiresAt) return true; // compat: anúncios antigos continuam válidos
+  if (!expiresAt) return true;
 
   const expDate: Date | null =
     expiresAt instanceof Timestamp
@@ -163,18 +148,11 @@ function isActiveAndNotExpired(data: any, now: Date): boolean {
 async function countActiveListingsForOwner(uid: string): Promise<number> {
   const now = new Date();
 
-  // Nota: usamos orderBy para ter resultados consistentes; pode pedir index dependendo do Firestore.
-  const q = query(
-    collection(db, "listings"),
-    where("ownerId", "==", uid),
-    qLimit(100)
-  );
-
+  const q = query(collection(db, "listings"), where("ownerId", "==", uid), qLimit(100));
   const snap = await getDocs(q);
 
   const items = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
   await markExpiredListingsIfNeeded(items).catch(() => 0);
-
 
   let count = 0;
   for (const d of snap.docs) {
@@ -186,11 +164,10 @@ async function countActiveListingsForOwner(uid: string): Promise<number> {
 }
 
 export async function createListingWithPlanLimits(input: CreateListingInput) {
-  const maxPhotos = input.plan === "pro" ? 7 : 3;
   const plan = normalizePlan(input.plan);
+  const maxPhotos = plan === "free" ? 3 : 7;
 
-
-  if (!input.uid) throw new Error("Precisas estar logado.");
+  if (!input.uid) throw new AppError("UNAUTHENTICATED", "Precisas estar logado.");
   if (!input.title?.trim()) throw new Error("Escreve um título.");
   if (!input.category?.trim()) throw new Error("Seleciona uma categoria.");
   if (!input.location?.trim()) throw new Error("Escreve a localização.");
@@ -201,7 +178,10 @@ export async function createListingWithPlanLimits(input: CreateListingInput) {
   if (plan === "free") {
     const activeCount = await countActiveListingsForOwner(input.uid);
     if (activeCount >= getPlanActiveLimit(plan)) {
-      throw new Error("Plano FREE: máximo 3 anúncios ativos.");
+      throw new AppError(
+        "FREE_ACTIVE_LIMIT",
+        "Chegaste ao limite do plano FREE (3 anúncios ativos)."
+      );
     }
   }
 
