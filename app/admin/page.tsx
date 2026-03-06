@@ -193,7 +193,7 @@ export default function AdminPage() {
             </button>
           )}
 
-          {showApprove && (
+          {showApprove && p.proofPath && (
             <button onClick={() => approve(p.id)}>
               Aprovar pagamento
             </button>
