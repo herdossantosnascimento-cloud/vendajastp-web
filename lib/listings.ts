@@ -17,6 +17,7 @@ import { db, storage } from "./firebase";
 import { getPlanActiveLimit, getPlanDurationDays, type UserPlan } from "./planRules";
 import { AppError } from "./errors";
 import { markExpiredListingsIfNeeded } from "./listings/markExpiredListings";
+import { getEffectivePlan } from "./effectivePlan";
 
 export type Listing = {
   id: string;
@@ -164,7 +165,17 @@ async function countActiveListingsForOwner(uid: string): Promise<number> {
 }
 
 export async function createListingWithPlanLimits(input: CreateListingInput) {
-  const plan = normalizePlan(input.plan);
+  const requestedPlan = normalizePlan(input.plan);
+
+  const userSnap = await getDoc(doc(db, "users", input.uid));
+  const userData = userSnap.exists() ? (userSnap.data() as any) : {};
+
+  const plan = getEffectivePlan({
+    plan: userData?.plan ?? requestedPlan,
+    planStatus: userData?.planStatus,
+    planExpiresAt: userData?.planExpiresAt,
+  });
+
   const maxPhotos = plan === "free" ? 3 : 7;
 
   if (!input.uid) throw new AppError("UNAUTHENTICATED", "Precisas estar logado.");
