@@ -14,13 +14,14 @@ import {
 import { httpsCallable } from "firebase/functions";
 import { getDownloadURL, ref } from "firebase/storage";
 
-// AJUSTA ESTA LINHA APENAS SE O CAMINHO FOR DIFERENTE NO TEU PROJETO
 import { auth, db, functions, storage } from "@/lib/firebase";
+
+type PaymentPlan = "free" | "monthly" | "annual";
 
 type Payment = {
   id: string;
   uid?: string;
-  plan?: "free" | "monthly" | "annual";
+  plan?: PaymentPlan;
   status?: string;
   proofPath?: string;
   createdAt?: Timestamp | null;
@@ -28,6 +29,16 @@ type Payment = {
   approvedAt?: Timestamp | null;
   proofUploadedAt?: Timestamp | null;
 };
+
+type AdminSummary = {
+  approvedPayments: number;
+  monthlySold: number;
+  annualSold: number;
+  totalRevenue: number;
+};
+
+const MONTHLY_PRICE = 200;
+const ANNUAL_PRICE = 1500;
 
 function formatDate(ts?: Timestamp | null) {
   if (!ts) return "-";
@@ -38,6 +49,57 @@ function formatDate(ts?: Timestamp | null) {
   }
 }
 
+function formatDb(value: number) {
+  try {
+    return new Intl.NumberFormat("pt-PT").format(value) + " DB";
+  } catch {
+    return `${value} DB`;
+  }
+}
+
+function buildAdminSummary(payments: Payment[]): AdminSummary {
+  const approvedPayments = payments.filter((payment) => payment.status === "approved");
+
+  const monthlySold = approvedPayments.filter(
+    (payment) => payment.plan === "monthly"
+  ).length;
+
+  const annualSold = approvedPayments.filter(
+    (payment) => payment.plan === "annual"
+  ).length;
+
+  const totalRevenue = monthlySold * 200 + annualSold * 1500;
+
+  return {
+    approvedPayments: approvedPayments.length,
+    monthlySold,
+    annualSold,
+    totalRevenue,
+  };
+}
+
+function SummaryBox({
+  title,
+  value,
+}: {
+  title: string;
+  value: string | number;
+}) {
+  return (
+    <div
+      style={{
+        border: "1px solid #ddd",
+        borderRadius: 12,
+        padding: 16,
+        background: "#fff",
+      }}
+    >
+      <div style={{ fontSize: 14, opacity: 0.8 }}>{title}</div>
+      <div style={{ fontSize: 28, fontWeight: 700, marginTop: 8 }}>{value}</div>
+    </div>
+  );
+}
+
 export default function AdminPage() {
   const [loading, setLoading] = useState(true);
   const [checkingAdmin, setCheckingAdmin] = useState(true);
@@ -45,6 +107,12 @@ export default function AdminPage() {
   const [error, setError] = useState("");
   const [pending, setPending] = useState<Payment[]>([]);
   const [recent, setRecent] = useState<Payment[]>([]);
+  const [summary, setSummary] = useState<AdminSummary>({
+    approvedPayments: 0,
+    monthlySold: 0,
+    annualSold: 0,
+    totalRevenue: 0,
+  });
 
   async function loadPayments() {
     try {
@@ -62,9 +130,16 @@ export default function AdminPage() {
         limit(20)
       );
 
-      const [pendingSnap, recentSnap] = await Promise.all([
+      const approvedQ = query(
+        collection(db, "payments"),
+        where("status", "==", "approved"),
+        orderBy("updatedAt", "desc")
+      );
+
+      const [pendingSnap, recentSnap, approvedSnap] = await Promise.all([
         getDocs(pendingQ),
         getDocs(recentQ),
+        getDocs(approvedQ),
       ]);
 
       const pendingData: Payment[] = pendingSnap.docs.map((doc) => ({
@@ -77,8 +152,14 @@ export default function AdminPage() {
         ...(doc.data() as Omit<Payment, "id">),
       }));
 
+      const approvedData: Payment[] = approvedSnap.docs.map((doc) => ({
+        id: doc.id,
+        ...(doc.data() as Omit<Payment, "id">),
+      }));
+
       setPending(pendingData);
       setRecent(recentData);
+      setSummary(buildAdminSummary(approvedData));
     } catch (err: any) {
       console.error(err);
       setError(err?.message || "Erro ao carregar pagamentos.");
@@ -133,6 +214,24 @@ export default function AdminPage() {
     }
   }
 
+  async function repairUserPlan(uid?: string) {
+    try {
+      setError("");
+      if (!uid) {
+        setError("UID em falta para reparar plano.");
+        return;
+      }
+      const fn = httpsCallable(functions, "repairUserPlanFromLatestApprovedPayment");
+      const result = await fn({ uid });
+      console.log("repairUserPlan result:", result);
+      alert("Plano do utilizador reparado com sucesso.");
+      await loadPayments();
+    } catch (err: any) {
+      console.error(err);
+      setError(err?.message || "Erro ao reparar plano do utilizador.");
+    }
+  }
+
   async function reject(paymentId: string) {
     try {
       setError("");
@@ -160,10 +259,12 @@ export default function AdminPage() {
     p,
     showApprove = false,
     showReject = false,
+    showRepair = false,
   }: {
     p: Payment;
     showApprove?: boolean;
     showReject?: boolean;
+    showRepair?: boolean;
   }) {
     return (
       <div
@@ -204,6 +305,12 @@ export default function AdminPage() {
               Rejeitar pagamento
             </button>
           )}
+
+          {showRepair && (
+            <button onClick={() => repairUserPlan(p.uid)}>
+              Reparar plano do utilizador
+            </button>
+          )}
         </div>
       </div>
     );
@@ -229,13 +336,39 @@ export default function AdminPage() {
   return (
     <div style={{ padding: 16, maxWidth: 1000 }}>
       <h1>Admin</h1>
-      <p>Pagamentos pendentes + recentes (para veres comprovativos mesmo depois de aprovar).</p>
+      <p>Resumo da plataforma + pagamentos pendentes + recentes.</p>
 
       {error && (
         <div style={{ padding: 12, margin: "12px 0", border: "1px solid #ddd" }}>
           <b>Erro:</b> {error}
         </div>
       )}
+
+      <div
+        style={{
+          display: "grid",
+          gap: 12,
+          gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))",
+          margin: "16px 0 24px",
+        }}
+      >
+        <SummaryBox
+          title="Pagamentos aprovados"
+          value={summary.approvedPayments}
+        />
+        <SummaryBox
+          title="Planos mensais vendidos"
+          value={summary.monthlySold}
+        />
+        <SummaryBox
+          title="Planos anuais vendidos"
+          value={summary.annualSold}
+        />
+        <SummaryBox
+          title="Receita total"
+          value={formatDb(summary.totalRevenue)}
+        />
+      </div>
 
       <h2>Pendentes</h2>
       {pending.length === 0 ? (
@@ -254,7 +387,7 @@ export default function AdminPage() {
       ) : (
         <div style={{ display: "grid", gap: 12 }}>
           {recent.map((p) => (
-            <Card key={p.id} p={p} />
+            <Card key={p.id} p={p} showRepair />
           ))}
         </div>
       )}

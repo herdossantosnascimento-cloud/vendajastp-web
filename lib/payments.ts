@@ -1,4 +1,4 @@
-import { doc, serverTimestamp, updateDoc } from "firebase/firestore";
+import { addDoc, collection, serverTimestamp } from "firebase/firestore";
 import { db } from "@/lib/firebase";
 
 export type PaymentMethod = "sao_wallet" | "bank_transfer" | "stripe";
@@ -20,22 +20,18 @@ export async function requestPlanPayment(params: {
 
   const paymentRef = makePaymentRef(uid, plan);
 
-  await updateDoc(doc(db, "users", uid), {
+  const docRef = await addDoc(collection(db, "payments"), {
+    uid,
     plan,
-    planStatus: "pending_payment",
-    paymentMethod: method,
+    method,
     paymentRef,
-    paymentRequestedAt: serverTimestamp(),
+    status: "pending_payment",
+    createdAt: serverTimestamp(),
+    updatedAt: serverTimestamp(),
   });
 
-  return { paymentRef };
-}
-
-export async function markPaymentSent(params: { uid: string }) {
-  const { uid } = params;
-
-  await updateDoc(doc(db, "users", uid), {
-    planStatus: "waiting_confirmation",
-    paymentSentAt: serverTimestamp(),
-  });
+  return {
+    paymentId: docRef.id,
+    paymentRef,
+  };
 }

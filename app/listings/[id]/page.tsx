@@ -1,10 +1,12 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
+import { httpsCallable } from "firebase/functions";
 import { deleteListing, fetchListingById, Listing, normalizeWhatsApp, updateListing } from "@/lib/listings";
 import { useAuth } from "@/context/AuthContext";
 import { CATEGORIES } from "@/lib/categories";
+import { functions } from "@/lib/firebase";
 
 function priceText(p?: string | number) {
   const s = String(p ?? "").trim();
@@ -30,6 +32,7 @@ export default function ListingDetailPage() {
   const [item, setItem] = useState<Listing | null>(null);
   const [loading, setLoading] = useState(true);
   const [active, setActive] = useState(0);
+  const viewTrackedRef = useRef<string | null>(null);
 
   // Edit mode
   const [editing, setEditing] = useState(false);
@@ -59,6 +62,22 @@ export default function ListingDetailPage() {
           setLocation(String(data.location ?? ""));
           setDescription(String(data.description ?? ""));
           setWhatsapp(String(data.whatsapp ?? ""));
+        }
+
+        if (data?.id && viewTrackedRef.current !== data.id) {
+          viewTrackedRef.current = data.id;
+
+          try {
+            const fn = httpsCallable(functions, "incrementListingViews");
+            await fn({ listingId: data.id });
+
+            const refreshed = await fetchListingById(data.id);
+            if (alive && refreshed) {
+              setItem(refreshed);
+            }
+          } catch {
+            // ignorar erro de views para não bloquear a página
+          }
         }
       } finally {
         if (alive) setLoading(false);
@@ -215,6 +234,9 @@ export default function ListingDetailPage() {
                   {categoryLabel(item.category)}
                 </span>
                 <span className="rounded-full border bg-white px-3 py-1 text-gray-600">{item.location}</span>
+                <span className="rounded-full border bg-white px-3 py-1 text-gray-600">
+                  👁 {Number(item.views ?? 0)} visualizações
+                </span>
               </div>
             </div>
 

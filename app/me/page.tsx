@@ -34,6 +34,8 @@ function priceText(p?: string | number) {
 
 function isActiveAndNotExpired(item: any) {
   if (item?.status === "expired") return false;
+  if (item?.status === "sold") return false;
+  if (item?.status && item?.status !== "active") return false;
 
   const expiresAt = item?.expiresAt;
   if (!expiresAt) return true;
@@ -252,7 +254,7 @@ export default function MePage() {
         <StatCard
           label="Limite do plano"
           value={effectivePlan === "free" ? `${planLimit}` : "Ilimitado"}
-          help={effectivePlan === "free" ? "No plano FREE o limite atual é 3." : "Plano pago sem limite curto visível nesta UI."}
+          help={effectivePlan === "free" ? "No plano FREE o limite atual é 3." : "Conta paga ativa."}
         />
 
         <StatCard

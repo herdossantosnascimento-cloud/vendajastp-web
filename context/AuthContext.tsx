@@ -21,11 +21,8 @@ export type UserDoc = {
 type AuthContextValue = {
   user: User | null;
   userData: UserDoc | null;
-
-  // compat (para páginas antigas que ainda usem estes nomes)
   firebaseUser: User | null;
   userDoc: UserDoc | null;
-
   loading: boolean;
   loginWithGoogle: () => Promise<void>;
   logout: () => Promise<void>;
@@ -59,28 +56,47 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
       const userRef = doc(db, "users", u.uid);
 
-      // cria/atualiza doc do user (não apaga dados existentes)
-      await setDoc(
+      try {
+        await setDoc(
+          userRef,
+          {
+            email: u.email ?? "",
+            displayName: u.displayName ?? "",
+            photoURL: u.photoURL ?? "",
+            updatedAt: serverTimestamp(),
+            createdAt: serverTimestamp(),
+          },
+          { merge: true }
+        );
+      } catch (err) {
+        console.error("Erro ao garantir user doc:", err);
+      }
+
+      unsubUserRef.current = onSnapshot(
         userRef,
-        {
-          plan: "free",
-          createdAt: serverTimestamp(),
+        (snap) => {
+          const data = snap.exists() ? (snap.data() as any) : {};
+
+          setUserData({
+            plan: data.plan === "pro" ? "pro" : "free",
+            freeListingsUsed: Number(data.freeListingsUsed ?? 0),
+            whatsapp: data.whatsapp,
+            createdAt: data.createdAt,
+          });
+
+          setLoading(false);
         },
-        { merge: true }
+        (err) => {
+          console.error("Erro ao ler user doc:", err);
+          setUserData({
+            plan: "free",
+            freeListingsUsed: 0,
+            whatsapp: "",
+            createdAt: null,
+          });
+          setLoading(false);
+        }
       );
-
-      unsubUserRef.current = onSnapshot(userRef, (snap) => {
-        const data = snap.exists() ? (snap.data() as any) : {};
-
-        setUserData({
-          plan: data.plan === "pro" ? "pro" : "free",
-          freeListingsUsed: Number(data.freeListingsUsed ?? 0),
-          whatsapp: data.whatsapp,
-          createdAt: data.createdAt,
-        });
-
-        setLoading(false);
-      });
     });
 
     return () => {
@@ -102,10 +118,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     () => ({
       user,
       userData,
-
       firebaseUser: user,
       userDoc: userData,
-
       loading,
       loginWithGoogle,
       logout,

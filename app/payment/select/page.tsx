@@ -37,23 +37,25 @@ export default function PaymentSelectPage() {
     try {
       setLoading(method);
 
-      const { paymentRef } = await requestPlanPayment({
+      const { paymentId, paymentRef } = await requestPlanPayment({
         uid: user.uid,
         plan,
         method,
       });
 
+      const qs = `plan=${plan}&ref=${encodeURIComponent(paymentRef)}&paymentId=${encodeURIComponent(paymentId)}`;
+
       if (method === "bank_transfer") {
-        router.push(`/payment/bank?plan=${plan}&ref=${encodeURIComponent(paymentRef)}`);
-        return;
-      }
-      if (method === "sao_wallet") {
-        router.push(`/payment/sao-wallet?plan=${plan}&ref=${encodeURIComponent(paymentRef)}`);
+        router.push(`/payment/bank?${qs}`);
         return;
       }
 
-      // Stripe vamos ligar depois
-      router.push(`/payment/stripe?plan=${plan}&ref=${encodeURIComponent(paymentRef)}`);
+      if (method === "sao_wallet") {
+        router.push(`/payment/sao-wallet?${qs}`);
+        return;
+      }
+
+      router.push(`/payment/stripe?${qs}`);
     } catch (e: any) {
       setNextToast(e?.message || "Erro ao iniciar pagamento.", "error");
     } finally {
@@ -111,7 +113,7 @@ export default function PaymentSelectPage() {
           </button>
 
           <p className="mt-3 text-xs text-gray-500">
-            Vais ver IBAN/conta + referência única.
+            Vais ver IBAN/conta + referência única e depois poder enviar o comprovativo.
           </p>
         </div>
 
