@@ -1,38 +1,18 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useMemo, useState } from "react";
 import { usePathname, useRouter } from "next/navigation";
 import { useAuth } from "@/context/AuthContext";
-import { Conversation, getUnreadCountForUser, subscribeUserConversations } from "@/lib/messages";
 
 export default function Header() {
   const router = useRouter();
   const pathname = usePathname();
   const { user, loading, logout } = useAuth();
-  const [items, setItems] = useState<Conversation[]>([]);
-
-  useEffect(() => {
-    if (!user?.uid) {
-      setItems([]);
-      return;
-    }
-
-    const unsub = subscribeUserConversations(user.uid, setItems);
-    return () => unsub();
-  }, [user?.uid]);
 
   async function onLogout() {
     await logout();
     router.replace("/");
   }
-
-  const unreadTotal = useMemo(() => {
-    if (!user?.uid) return 0;
-    return items.reduce((sum, item) => sum + getUnreadCountForUser(item, user.uid), 0);
-  }, [items, user?.uid]);
-
-  const messagesLabel = unreadTotal > 0 ? `Mensagens (${unreadTotal})` : "Mensagens";
 
   const navClass = (href: string) =>
     `rounded-xl px-3 py-2 text-sm font-semibold ${
@@ -63,6 +43,11 @@ export default function Header() {
           <Link href="/plans" className={navClass("/plans")}>
             Planos
           </Link>
+          {user ? (
+            <Link href="/messages" className={navClass("/messages")}>
+              Mensagens
+            </Link>
+          ) : null}
           <Link
             href="/new"
             className="rounded-xl bg-red-600 px-3 py-2 text-sm font-semibold text-white hover:opacity-90"
@@ -87,7 +72,7 @@ export default function Header() {
                 href="/messages"
                 className="rounded-xl border px-4 py-2 text-sm font-semibold hover:bg-gray-50"
               >
-                {messagesLabel}
+                Mensagens
               </Link>
 
               <Link
@@ -117,7 +102,7 @@ export default function Header() {
         </Link>
         {user ? (
           <Link href="/messages" className={navClass("/messages")}>
-            {messagesLabel}
+            Mensagens
           </Link>
         ) : null}
         <Link

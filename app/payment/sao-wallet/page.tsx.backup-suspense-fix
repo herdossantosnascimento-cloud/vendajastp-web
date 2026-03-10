@@ -1,13 +1,13 @@
 "use client";
 
-import { Suspense, useMemo, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { requestPlanPayment } from "@/lib/payments";
 import { useAuth } from "@/context/AuthContext";
 import { setNextToast } from "@/lib/toast-flag";
 import Link from "next/link";
+import { useMemo, useState } from "react";
 
-function SaoWalletPaymentContent() {
+export default function SaoWalletPaymentPage() {
   const router = useRouter();
   const sp = useSearchParams();
   const { user } = useAuth();
@@ -93,21 +93,5 @@ function SaoWalletPaymentContent() {
         </p>
       </div>
     </div>
-  );
-}
-
-export default function SaoWalletPaymentPage() {
-  return (
-    <Suspense
-      fallback={
-        <div className="mx-auto max-w-3xl px-6 py-14">
-          <div className="rounded-2xl border bg-white p-6 text-sm text-gray-600">
-            A carregar pagamento...
-          </div>
-        </div>
-      }
-    >
-      <SaoWalletPaymentContent />
-    </Suspense>
   );
 }

@@ -4,7 +4,6 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { httpsCallable } from "firebase/functions";
 import { deleteListing, fetchListingById, Listing, normalizeWhatsApp, updateListing } from "@/lib/listings";
-import { createOrGetConversation } from "@/lib/messages";
 import { useAuth } from "@/context/AuthContext";
 import { CATEGORIES } from "@/lib/categories";
 import { functions } from "@/lib/firebase";
@@ -39,7 +38,6 @@ export default function ListingDetailPage() {
   const [editing, setEditing] = useState(false);
   const [saving, setSaving] = useState(false);
   const [deleting, setDeleting] = useState(false);
-  const [startingChat, setStartingChat] = useState(false);
 
   const [title, setTitle] = useState("");
   const [price, setPrice] = useState("");
@@ -145,7 +143,7 @@ export default function ListingDetailPage() {
 
     try {
       setSaving(true);
-      await updateListing(item.id, {
+      await updateListing(item!.id, {
         title: title.trim(),
         price: price.trim(),
         category: category.trim(),
@@ -154,7 +152,7 @@ export default function ListingDetailPage() {
         whatsapp: whatsapp.trim(),
       });
 
-      const refreshed = await fetchListingById(item.id);
+      const refreshed = await fetchListingById(item!.id);
       setItem(refreshed);
 
       setEditing(false);
@@ -174,7 +172,7 @@ export default function ListingDetailPage() {
 
     try {
       setDeleting(true);
-      await deleteListing(item.id);
+      await deleteListing(item!.id);
       alert("Anúncio apagado ✅");
       router.push("/listings");
       router.refresh();
@@ -182,45 +180,6 @@ export default function ListingDetailPage() {
       alert(e?.message ?? "Erro ao apagar anúncio.");
     } finally {
       setDeleting(false);
-    }
-  }
-
-  async function handleStartChat() {
-    if (!item) return;
-
-    if (!user?.uid) {
-      router.push(`/login?next=/listings/${item.id}`);
-      return;
-    }
-
-    if (!item.ownerId) {
-      alert("Este anúncio é antigo e ainda não tem vendedor associado.");
-      return;
-    }
-
-    if (String(user.uid) === String(item.ownerId)) return;
-
-    try {
-      setStartingChat(true);
-
-      const listingImage =
-        Array.isArray(item.images) && item.images.length
-          ? item.images[0]
-          : item.imageUrl || "";
-
-      const conversationId = await createOrGetConversation({
-        listingId: item.id,
-        listingTitle: item.title,
-        listingImage,
-        sellerId: item.ownerId,
-        buyerId: user.uid,
-      });
-
-      router.push(`/messages/${conversationId}`);
-    } catch (e: any) {
-      alert(e?.message || "Não foi possível iniciar a conversa.");
-    } finally {
-      setStartingChat(false);
     }
   }
 
@@ -282,17 +241,6 @@ export default function ListingDetailPage() {
             </div>
 
             <div className="flex flex-wrap gap-2">
-              {!isOwner && item.ownerId ? (
-                <button
-                  type="button"
-                  onClick={handleStartChat}
-                  disabled={startingChat}
-                  className="rounded-xl bg-gray-900 px-4 py-2 text-sm font-extrabold text-white hover:bg-black disabled:opacity-60"
-                >
-                  {startingChat ? "A abrir chat…" : "Enviar mensagem"}
-                </button>
-              ) : null}
-
               {waHref ? (
                 <a
                   href={waHref}

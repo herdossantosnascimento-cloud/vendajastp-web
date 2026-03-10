@@ -147,8 +147,6 @@ service cloud.firestore {
         && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
           "lastMessage",
           "lastMessageSenderId",
-          "buyerUnreadCount",
-          "sellerUnreadCount",
           "updatedAt",
           "lastMessageAt"
         ]);

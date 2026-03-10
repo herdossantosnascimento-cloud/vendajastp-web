@@ -193,11 +193,6 @@ export default function ListingDetailPage() {
       return;
     }
 
-    if (!item.ownerId) {
-      alert("Este anúncio é antigo e ainda não tem vendedor associado.");
-      return;
-    }
-
     if (String(user.uid) === String(item.ownerId)) return;
 
     try {
@@ -282,7 +277,7 @@ export default function ListingDetailPage() {
             </div>
 
             <div className="flex flex-wrap gap-2">
-              {!isOwner && item.ownerId ? (
+              {!isOwner ? (
                 <button
                   type="button"
                   onClick={handleStartChat}

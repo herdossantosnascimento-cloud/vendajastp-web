@@ -1,97 +1,84 @@
 "use client";
 
+import { Suspense, useMemo } from "react";
+import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 
-export default function PricingPage() {
+function PricingContent() {
   const searchParams = useSearchParams();
-  const reason = searchParams.get("reason");
+  const reason = useMemo(() => searchParams.get("reason") || "", [searchParams]);
 
   return (
-    <div className="mx-auto max-w-6xl px-6 py-16">
-      {/* Banner Upgrade */}
-      {reason === "upgrade" && (
-        <div className="mb-10 rounded-2xl border border-amber-300 bg-amber-50 p-6 text-amber-900 shadow-sm">
-          <h2 className="text-lg font-bold">🚀 Limite do plano FREE atingido</h2>
-          <p className="mt-2 text-sm">
-            Para publicar mais de <strong>3 anúncios ativos</strong>, faz upgrade para PRO e aumenta a tua visibilidade.
-          </p>
-        </div>
-      )}
-
-      <div className="text-center">
+    <main className="mx-auto max-w-5xl px-6 py-14">
+      <div className="mb-8">
         <h1 className="text-3xl font-extrabold tracking-tight">Escolhe o teu plano</h1>
-        <p className="mt-3 text-gray-600">Publica mais anúncios e destaca os teus produtos.</p>
+        <p className="mt-2 text-gray-600">
+          Publica anúncios no VendaJá STP com mais alcance e mais fotos.
+        </p>
+
+        {reason === "upgrade" && (
+          <div className="mt-4 rounded-2xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">
+            Atingiste o limite do plano FREE. Faz upgrade para continuar.
+          </div>
+        )}
       </div>
 
-      <div className="mt-14 grid gap-8 md:grid-cols-3">
-        {/* FREE */}
-        <div className="rounded-3xl border border-gray-200 bg-white p-8 shadow-sm">
-          <h2 className="text-xl font-bold">FREE</h2>
-          <p className="mt-4 text-4xl font-extrabold">0 Db</p>
-
-          <ul className="mt-6 space-y-3 text-sm text-gray-600">
-            <li>✔ 3 anúncios ativos</li>
-            <li>✔ 3 fotos por anúncio</li>
-            <li>✔ Duração limitada</li>
+      <div className="grid gap-6 md:grid-cols-3">
+        <div className="rounded-3xl border bg-white p-6 shadow-sm">
+          <div className="text-sm text-gray-500">FREE</div>
+          <div className="mt-2 text-3xl font-extrabold">0 STN</div>
+          <ul className="mt-4 space-y-2 text-sm text-gray-600">
+            <li>3 anúncios ativos</li>
+            <li>3 fotos por anúncio</li>
           </ul>
-
-          <button className="mt-8 w-full rounded-xl border border-gray-300 py-3 text-sm font-semibold text-gray-700 hover:bg-gray-50">
-            Plano Atual
-          </button>
         </div>
 
-        {/* PRO Mensal - DESTACADO */}
-        <div className="relative rounded-3xl border-2 border-emerald-500 bg-white p-8 shadow-lg md:scale-105">
-          <div className="absolute -top-4 left-1/2 -translate-x-1/2 rounded-full bg-emerald-500 px-4 py-1 text-xs font-bold text-white">
-            MAIS POPULAR
-          </div>
-
-          <h2 className="text-xl font-bold text-emerald-600">PRO Mensal</h2>
-          <div className="mt-4">
-            <span className="text-4xl font-extrabold">200 Db</span>
-          </div>
-
-          <p className="text-sm text-gray-500 mt-1">
-            ≈ 8€ / mês
-          </p>
-
-          <ul className="mt-6 space-y-3 text-sm text-gray-700">
-            <li>✔ 7 anúncios ativos</li>
-            <li>✔ 7 fotos por anúncio</li>
-            <li>✔ Maior visibilidade</li>
-            <li>✔ Renovação automática</li>
+        <div className="rounded-3xl border border-blue-200 bg-white p-6 shadow-sm">
+          <div className="text-sm text-blue-700">MONTHLY</div>
+          <div className="mt-2 text-3xl font-extrabold">200 STN</div>
+          <ul className="mt-4 space-y-2 text-sm text-gray-600">
+            <li>Mais anúncios</li>
+            <li>Até 7 fotos</li>
           </ul>
-
-          <a href="/payment/select?plan=monthly" className="mt-8 block w-full rounded-xl bg-emerald-500 py-3 text-center text-sm font-semibold text-white hover:bg-emerald-600 transition">Assinar Mensal</a>
+          <Link
+            href="/payment/select?plan=monthly"
+            className="mt-6 inline-flex rounded-xl bg-blue-700 px-4 py-3 text-sm font-medium text-white"
+          >
+            Assinar Mensal
+          </Link>
         </div>
 
-        {/* PRO Anual - MELHOR VALOR */}
-        <div className="relative rounded-3xl border-2 border-emerald-400 bg-gradient-to-b from-emerald-50 to-white p-8 shadow-md">
-          <div className="absolute -top-4 left-1/2 -translate-x-1/2 rounded-full bg-emerald-700 px-4 py-1 text-xs font-bold text-white">
-            MELHOR VALOR
-          </div>
-
-          <h2 className="text-xl font-bold text-emerald-700">PRO Anual</h2>
-
-          <div className="mt-4">
-            <span className="mr-2 text-gray-400 line-through">2400 Db</span>
-            <span className="text-4xl font-extrabold">1500 Db</span>
-            <span className="ml-2 text-sm text-gray-500">por ano</span>
-          </div>
-
-          <p className="mt-1 text-sm font-semibold text-emerald-700">Poupa 900 Db por ano</p>
-
-          <ul className="mt-6 space-y-3 text-sm text-gray-700">
-            <li>✔ 12 anúncios ativos</li>
-            <li>✔ 7 fotos por anúncio</li>
-            <li>⭐ Destaque prioritário</li>
-            <li>⭐ Badge especial PRO</li>
-            <li>⭐ Renovação automática anual</li>
+        <div className="rounded-3xl border border-emerald-200 bg-white p-6 shadow-sm">
+          <div className="text-sm text-emerald-700">ANNUAL</div>
+          <div className="mt-2 text-3xl font-extrabold">1500 STN</div>
+          <ul className="mt-4 space-y-2 text-sm text-gray-600">
+            <li>Limite maior</li>
+            <li>Até 7 fotos</li>
           </ul>
-
-          <a href="/payment/select?plan=annual" className="mt-8 block w-full rounded-xl bg-emerald-700 py-3 text-center text-sm font-semibold text-white hover:bg-emerald-800 transition">Assinar Anual</a>
+          <Link
+            href="/payment/select?plan=annual"
+            className="mt-6 inline-flex rounded-xl bg-emerald-700 px-4 py-3 text-sm font-medium text-white"
+          >
+            Assinar Anual
+          </Link>
         </div>
       </div>
-    </div>
+    </main>
+  );
+}
+
+export default function PricingPage() {
+  return (
+    <Suspense
+      fallback={
+        <main className="mx-auto max-w-5xl px-6 py-14">
+          <div className="rounded-2xl border bg-white p-6 text-sm text-gray-600">
+            A carregar planos...
+          </div>
+        </main>
+      }
+    >
+      <PricingContent />
+    </Suspense>
   );
 }
