@@ -1,12 +1,32 @@
 "use client";
 
-import { Suspense, useMemo } from "react";
+import { Suspense, useEffect, useMemo } from "react";
 import Link from "next/link";
-import { useSearchParams } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
+import { useAuth } from "@/context/AuthContext";
 
 function PaymentSelectContent() {
+  const router = useRouter();
+  const { user, loading } = useAuth();
   const sp = useSearchParams();
   const plan = useMemo(() => (sp.get("plan") === "annual" ? "annual" : "monthly"), [sp]);
+
+  useEffect(() => {
+    if (loading) return;
+    if (!user?.uid) {
+      router.replace("/login?next=/pricing");
+    }
+  }, [user, loading, router]);
+
+  if (loading || !user?.uid) {
+    return (
+      <div className="mx-auto max-w-4xl px-6 py-14">
+        <div className="rounded-2xl border bg-white p-6 text-sm text-gray-600">
+          A validar acesso...
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="mx-auto max-w-4xl px-6 py-14">
@@ -19,7 +39,7 @@ function PaymentSelectContent() {
         Plano selecionado: <b>{plan === "annual" ? "Anual" : "Mensal"}</b>
       </p>
 
-      <div className="mt-8 grid gap-4 md:grid-cols-2">
+      <div className="mt-8 grid gap-4 md:grid-cols-3">
         <Link
           href={`/payment/bank?plan=${plan}`}
           className="rounded-3xl border border-blue-200 bg-white p-6 shadow-sm transition hover:shadow-md"
@@ -37,6 +57,16 @@ function PaymentSelectContent() {
           <div className="text-lg font-bold text-gray-900">São Wallet</div>
           <p className="mt-2 text-sm text-gray-600">
             Paga pela São Wallet e depois confirmamos o teu pedido.
+          </p>
+        </Link>
+
+        <Link
+          href={`/payment/stripe?plan=${plan}`}
+          className="rounded-3xl border border-indigo-200 bg-white p-6 shadow-sm transition hover:shadow-md"
+        >
+          <div className="text-lg font-bold text-gray-900">Stripe</div>
+          <p className="mt-2 text-sm text-gray-600">
+            Paga com cartão através do Stripe Checkout e ativa o plano automaticamente.
           </p>
         </Link>
       </div>

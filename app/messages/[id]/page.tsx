@@ -45,6 +45,8 @@ export default function ConversationPage() {
   useEffect(() => {
     if (loading) return;
     if (!user) {
+      setMessages([]);
+      setConversation(null);
       router.replace(`/login?next=/messages/${conversationId}`);
       return;
     }
@@ -67,7 +69,15 @@ export default function ConversationPage() {
 
         setConversation(data);
         await markConversationAsRead(conversationId, user.uid);
-        unsubMessages = subscribeConversationMessages(conversationId, setMessages);
+
+        unsubMessages = subscribeConversationMessages(
+          conversationId,
+          setMessages,
+          () => {
+            setMessages([]);
+            setError("");
+          }
+        );
       } catch (err: any) {
         setError(err?.message || "Erro ao abrir conversa.");
       }

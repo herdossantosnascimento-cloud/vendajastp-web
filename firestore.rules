@@ -143,15 +143,27 @@ service cloud.firestore {
         && request.resource.data.listingId == resource.data.listingId
         && request.resource.data.participants == resource.data.participants
         && request.resource.data.createdAt == resource.data.createdAt
-        && request.resource.data.lastMessageSenderId == request.auth.uid
-        && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
-          "lastMessage",
-          "lastMessageSenderId",
-          "buyerUnreadCount",
-          "sellerUnreadCount",
-          "updatedAt",
-          "lastMessageAt"
-        ]);
+        && (
+          (
+            request.resource.data.lastMessageSenderId == request.auth.uid
+            && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+              "lastMessage",
+              "lastMessageSenderId",
+              "buyerUnreadCount",
+              "sellerUnreadCount",
+              "updatedAt",
+              "lastMessageAt"
+            ])
+          )
+          ||
+          (
+            request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+              "buyerUnreadCount",
+              "sellerUnreadCount",
+              "updatedAt"
+            ])
+          )
+        );
 
       allow delete: if false;
 
@@ -167,8 +179,56 @@ service cloud.firestore {
           && request.resource.data.text.size() > 0
           && request.resource.data.text.size() <= 1000;
 
-        allow update, delete: if false;
+        allow update: if isAdmin()
+        && request.resource.data.listingId == resource.data.listingId
+        && request.resource.data.listingTitle == resource.data.listingTitle
+        && request.resource.data.listingOwnerId == resource.data.listingOwnerId
+        && request.resource.data.reportedBy == resource.data.reportedBy
+        && request.resource.data.reason == resource.data.reason
+        && request.resource.data.details == resource.data.details
+        && request.resource.data.createdAt == resource.data.createdAt
+        && request.resource.data.status in ["pending", "reviewed", "resolved"];
+
+      allow delete: if false;
       }
+    }
+
+    match /reports/{reportId} {
+      allow read: if isAdmin()
+        || (signedIn() && resource.data.reportedBy == request.auth.uid);
+
+      allow create: if signedIn()
+        && request.resource.data.reportedBy == request.auth.uid
+        && request.resource.data.listingId is string
+        && request.resource.data.listingTitle is string
+        && request.resource.data.listingOwnerId is string
+        && request.resource.data.reason in [
+          "fraud",
+          "offensive",
+          "prohibited",
+          "false_info",
+          "spam",
+          "other"
+        ]
+        && request.resource.data.details is string
+        && request.resource.data.details.size() <= 1000
+        && request.resource.data.status == "pending"
+        && request.resource.data.reportedBy != request.resource.data.listingOwnerId
+        && exists(/databases/$(database)/documents/listings/$(request.resource.data.listingId))
+        && get(/databases/$(database)/documents/listings/$(request.resource.data.listingId)).data.ownerId == request.resource.data.listingOwnerId;
+
+      allow update: if isAdmin()
+        && request.resource.data.listingId == resource.data.listingId
+        && request.resource.data.listingTitle == resource.data.listingTitle
+        && request.resource.data.listingOwnerId == resource.data.listingOwnerId
+        && request.resource.data.reportedBy == resource.data.reportedBy
+        && request.resource.data.reason == resource.data.reason
+        && request.resource.data.details == resource.data.details
+        && request.resource.data.createdAt == resource.data.createdAt
+        && request.resource.data.updatedAt is timestamp
+        && request.resource.data.status in ["pending", "reviewed", "resolved"];
+
+      allow delete: if false;
     }
 
     match /{document=**} {

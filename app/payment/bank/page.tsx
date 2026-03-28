@@ -5,6 +5,7 @@ import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useAuth } from "@/context/AuthContext";
 import { requestPlanPayment } from "@/lib/payments";
+import { uploadPaymentProof } from "@/lib/paymentProof";
 import { setNextToast } from "@/lib/toast-flag";
 
 function BankPaymentContent() {
@@ -14,6 +15,7 @@ function BankPaymentContent() {
 
   const plan = useMemo(() => (sp.get("plan") === "annual" ? "annual" : "monthly"), [sp]);
   const [loading, setLoading] = useState(false);
+  const [proofFile, setProofFile] = useState<File | null>(null);
 
   const amountSTN = plan === "annual" ? 1500 : 200;
 
@@ -24,19 +26,30 @@ function BankPaymentContent() {
       return;
     }
 
+    if (!proofFile) {
+      setNextToast("Seleciona o comprovativo antes de continuar.", "error");
+      return;
+    }
+
     try {
       setLoading(true);
 
-      await requestPlanPayment({
+      const { paymentId } = await requestPlanPayment({
         uid: user.uid,
         plan,
         method: "bank_transfer",
       });
 
-      setNextToast("Pedido enviado. Envia o comprovativo para validação ✅", "success");
+      await uploadPaymentProof({
+        uid: user.uid,
+        paymentId,
+        file: proofFile,
+      });
+
+      setNextToast("Pagamento enviado com comprovativo. Vamos validar ✅", "success");
       router.push("/payment/sent");
     } catch (e: any) {
-      setNextToast(e?.message || "Erro ao criar pedido de pagamento.", "error");
+      setNextToast(e?.message || "Erro ao enviar pagamento.", "error");
     } finally {
       setLoading(false);
     }
@@ -50,7 +63,7 @@ function BankPaymentContent() {
 
       <h1 className="mt-4 text-3xl font-extrabold tracking-tight">Transferência Bancária</h1>
       <p className="mt-2 text-gray-600">
-        Faz a transferência e depois envia o comprovativo para ativarmos o teu plano.
+        Faz a transferência e envia já o comprovativo para ativarmos o teu plano.
       </p>
 
       <div className="mt-8 rounded-3xl border border-blue-200 bg-white p-7 shadow-sm">
@@ -71,16 +84,31 @@ function BankPaymentContent() {
           </div>
         </div>
 
+        <div className="mt-6">
+          <label className="mb-2 block text-sm font-semibold text-gray-800">
+            Comprovativo de pagamento
+          </label>
+          <input
+            type="file"
+            accept=".jpg,.jpeg,.png,.pdf,.webp"
+            onChange={(e) => setProofFile(e.target.files?.[0] || null)}
+            className="block w-full rounded-xl border border-gray-300 px-3 py-3 text-sm"
+          />
+          <p className="mt-2 text-xs text-gray-500">
+            Aceita imagem ou PDF.
+          </p>
+        </div>
+
         <button
           onClick={onConfirm}
           disabled={loading}
           className="mt-7 w-full rounded-xl bg-blue-700 py-3 text-sm font-semibold text-white hover:bg-blue-800 disabled:opacity-60"
         >
-          {loading ? "A guardar..." : "Já fiz a transferência"}
+          {loading ? "A enviar..." : "Enviar pagamento com comprovativo"}
         </button>
 
         <p className="mt-3 text-xs text-gray-500">
-          Depois poderás enviar o comprovativo para confirmação.
+          O teu pedido ficará pendente até validação do admin.
         </p>
       </div>
     </div>

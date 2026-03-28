@@ -233,38 +233,54 @@ export async function fetchUserConversations(uid: string): Promise<Conversation[
 
 export function subscribeUserConversations(
   uid: string,
-  callback: (items: Conversation[]) => void
+  callback: (items: Conversation[]) => void,
+  onError?: (error: unknown) => void
 ) {
   const q = query(
     collection(db, "conversations"),
     where("participants", "array-contains", uid)
   );
 
-  return onSnapshot(q, (snap) => {
-    const items = snap.docs.map((d) => ({
-      id: d.id,
-      ...(d.data() as Omit<Conversation, "id">),
-    })) as Conversation[];
+  return onSnapshot(
+    q,
+    (snap) => {
+      const items = snap.docs.map((d) => ({
+        id: d.id,
+        ...(d.data() as Omit<Conversation, "id">),
+      })) as Conversation[];
 
-    callback(sortConversations(items));
-  });
+      callback(sortConversations(items));
+    },
+    (error) => {
+      callback([]);
+      if (onError) onError(error);
+    }
+  );
 }
 
 export function subscribeConversationMessages(
   conversationId: string,
-  callback: (items: ChatMessage[]) => void
+  callback: (items: ChatMessage[]) => void,
+  onError?: (error: unknown) => void
 ) {
   const q = query(
     collection(db, "conversations", conversationId, "messages"),
     orderBy("createdAt", "asc")
   );
 
-  return onSnapshot(q, (snap) => {
-    const items = snap.docs.map((d) => ({
-      id: d.id,
-      ...(d.data() as Omit<ChatMessage, "id">),
-    })) as ChatMessage[];
+  return onSnapshot(
+    q,
+    (snap) => {
+      const items = snap.docs.map((d) => ({
+        id: d.id,
+        ...(d.data() as Omit<ChatMessage, "id">),
+      })) as ChatMessage[];
 
-    callback(items);
-  });
+      callback(items);
+    },
+    (error) => {
+      callback([]);
+      if (onError) onError(error);
+    }
+  );
 }

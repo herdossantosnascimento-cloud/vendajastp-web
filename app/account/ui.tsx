@@ -43,12 +43,14 @@ function formatDate(value?: any) {
 function getStatusLabel(status?: string) {
   if (status === "sold") return "Vendido";
   if (status === "expired") return "Expirado";
+  if (status === "hidden_by_admin") return "Oculto pelo admin";
   return "Ativo";
 }
 
 function getStatusClass(status?: string) {
   if (status === "sold") return "bg-blue-50 text-blue-700 border-blue-200";
   if (status === "expired") return "bg-amber-50 text-amber-700 border-amber-200";
+  if (status === "hidden_by_admin") return "bg-rose-50 text-rose-700 border-rose-200";
   return "bg-emerald-50 text-emerald-700 border-emerald-200";
 }
 

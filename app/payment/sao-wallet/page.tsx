@@ -3,6 +3,7 @@
 import { Suspense, useMemo, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { requestPlanPayment } from "@/lib/payments";
+import { uploadPaymentProof } from "@/lib/paymentProof";
 import { useAuth } from "@/context/AuthContext";
 import { setNextToast } from "@/lib/toast-flag";
 import Link from "next/link";
@@ -16,6 +17,7 @@ function SaoWalletPaymentContent() {
   const ref = sp.get("ref") || "";
 
   const [loading, setLoading] = useState(false);
+  const [proofFile, setProofFile] = useState<File | null>(null);
   const amountSTN = plan === "annual" ? 1500 : 200;
 
   async function onPaid() {
@@ -25,17 +27,28 @@ function SaoWalletPaymentContent() {
       return;
     }
 
+    if (!proofFile) {
+      setNextToast("Seleciona o comprovativo antes de continuar.", "error");
+      return;
+    }
+
     try {
       setLoading(true);
 
-      await requestPlanPayment({
+      const { paymentId } = await requestPlanPayment({
         uid: user.uid,
         plan,
         method: "sao_wallet",
       });
 
-      setNextToast("Pedido enviado. Vamos confirmar e ativar o teu plano ✅", "success");
-      router.push("/new");
+      await uploadPaymentProof({
+        uid: user.uid,
+        paymentId,
+        file: proofFile,
+      });
+
+      setNextToast("Pedido enviado com comprovativo. Vamos confirmar ✅", "success");
+      router.push("/payment/sent");
     } catch (e: any) {
       setNextToast(e?.message || "Erro ao confirmar.", "error");
     } finally {
@@ -51,7 +64,7 @@ function SaoWalletPaymentContent() {
 
       <h1 className="mt-4 text-3xl font-extrabold tracking-tight">São Wallet</h1>
       <p className="mt-2 text-gray-600">
-        Faz o pagamento na São Wallet e coloca a referência abaixo na descrição.
+        Faz o pagamento na São Wallet e envia o comprovativo para validação.
       </p>
 
       <div className="mt-8 rounded-3xl border border-emerald-200 bg-white p-7 shadow-sm">
@@ -80,16 +93,31 @@ function SaoWalletPaymentContent() {
           </div>
         </div>
 
+        <div className="mt-6">
+          <label className="mb-2 block text-sm font-semibold text-gray-800">
+            Comprovativo de pagamento
+          </label>
+          <input
+            type="file"
+            accept=".jpg,.jpeg,.png,.pdf,.webp"
+            onChange={(e) => setProofFile(e.target.files?.[0] || null)}
+            className="block w-full rounded-xl border border-gray-300 px-3 py-3 text-sm"
+          />
+          <p className="mt-2 text-xs text-gray-500">
+            Aceita imagem ou PDF.
+          </p>
+        </div>
+
         <button
           onClick={onPaid}
           disabled={loading}
           className="mt-7 w-full rounded-xl bg-emerald-700 py-3 text-sm font-semibold text-white hover:bg-emerald-800 disabled:opacity-60"
         >
-          {loading ? "A guardar..." : "Já paguei na São Wallet"}
+          {loading ? "A enviar..." : "Enviar pagamento com comprovativo"}
         </button>
 
         <p className="mt-3 text-xs text-gray-500">
-          Depois, nós confirmamos e ativamos o teu plano.
+          Depois, o admin confirma e ativa o teu plano.
         </p>
       </div>
     </div>

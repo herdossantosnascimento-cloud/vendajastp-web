@@ -31,11 +31,17 @@ export default function MessagesPage() {
   useEffect(() => {
     if (loading) return;
     if (!user) {
+      setItems([]);
       router.replace("/login?next=/messages");
       return;
     }
 
-    const unsub = subscribeUserConversations(user.uid, setItems);
+    const unsub = subscribeUserConversations(
+      user.uid,
+      setItems,
+      () => setItems([])
+    );
+
     return () => unsub();
   }, [user, loading, router]);
 
@@ -77,7 +83,6 @@ export default function MessagesPage() {
               <div className="flex items-start gap-3">
                 <div className="h-16 w-16 overflow-hidden rounded-xl bg-gray-100">
                   {item.listingImage ? (
-                    // eslint-disable-next-line @next/next/no-img-element
                     <img
                       src={item.listingImage}
                       alt={item.listingTitle}

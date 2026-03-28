@@ -1,25 +1,27 @@
-import { getStorage, ref, uploadBytes } from "firebase/storage";
-import { getFunctions, httpsCallable } from "firebase/functions";
+import { httpsCallable } from "firebase/functions";
+import { ref, uploadBytes } from "firebase/storage";
+import { functions, storage } from "@/lib/firebase";
+
+function sanitizeFileName(name: string) {
+  return String(name || "proof")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^a-zA-Z0-9._-]/g, "_");
+}
 
 export async function uploadPaymentProof(params: {
+  uid: string;
   paymentId: string;
   file: File;
 }) {
-  const { paymentId, file } = params;
+  const { uid, paymentId, file } = params;
 
-  if (!file) throw new Error("Seleciona um ficheiro.");
-  if (file.size > 5 * 1024 * 1024) throw new Error("Máx 5MB.");
+  const safeName = sanitizeFileName(file.name || "proof");
+  const proofPath = `payment_proofs/${uid}/${paymentId}/${Date.now()}_${safeName}`;
 
-  const okType = file.type === "application/pdf" || file.type.startsWith("image/");
-  if (!okType) throw new Error("Só PDF ou imagem.");
-
-  const safeName = file.name.replace(/[^\w.\-]+/g, "_");
-  const proofPath = `payment_proofs/${paymentId}/${Date.now()}_${safeName}`;
-
-  const storage = getStorage();
   await uploadBytes(ref(storage, proofPath), file);
 
-  const fn = httpsCallable(getFunctions(), "attachPaymentProof");
+  const fn = httpsCallable(functions, "attachPaymentProof");
   await fn({ paymentId, proofPath });
 
   return { proofPath };

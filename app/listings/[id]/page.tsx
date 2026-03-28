@@ -5,6 +5,7 @@ import { useParams, useRouter } from "next/navigation";
 import { httpsCallable } from "firebase/functions";
 import { deleteListing, fetchListingById, Listing, normalizeWhatsApp, updateListing } from "@/lib/listings";
 import { createOrGetConversation } from "@/lib/messages";
+import { createListingReport, type ReportReason } from "@/lib/reports";
 import { useAuth } from "@/context/AuthContext";
 import { CATEGORIES } from "@/lib/categories";
 import { functions } from "@/lib/firebase";
@@ -40,6 +41,10 @@ export default function ListingDetailPage() {
   const [saving, setSaving] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [startingChat, setStartingChat] = useState(false);
+  const [showReportForm, setShowReportForm] = useState(false);
+  const [reporting, setReporting] = useState(false);
+  const [reportReason, setReportReason] = useState<ReportReason>("fraud");
+  const [reportDetails, setReportDetails] = useState("");
 
   const [title, setTitle] = useState("");
   const [price, setPrice] = useState("");
@@ -185,7 +190,50 @@ export default function ListingDetailPage() {
     }
   }
 
-  async function handleStartChat() {
+  
+  async function handleSubmitReport() {
+    if (!item) return;
+
+    if (!user?.uid) {
+      router.push(`/login?next=/listings/${item.id}`);
+      return;
+    }
+
+    if (!item.ownerId) {
+      alert("Este anúncio não tem vendedor associado.");
+      return;
+    }
+
+    if (String(user.uid) === String(item.ownerId)) {
+      alert("Não podes denunciar o teu próprio anúncio.");
+      return;
+    }
+
+    try {
+      setReporting(true);
+
+      await createListingReport({
+        listingId: item.id,
+        listingTitle: item.title,
+        listingOwnerId: item.ownerId,
+        reportedBy: user.uid,
+        reason: reportReason,
+        details: reportDetails,
+      });
+
+      setReportDetails("");
+      setReportReason("fraud");
+      setShowReportForm(false);
+
+      alert("Denúncia enviada com sucesso.");
+    } catch (e) {
+      alert("Não foi possível enviar a denúncia.");
+    } finally {
+      setReporting(false);
+    }
+  }
+
+async function handleStartChat() {
     if (!item) return;
 
     if (!user?.uid) {
@@ -293,6 +341,16 @@ export default function ListingDetailPage() {
                 </button>
               ) : null}
 
+              {!isOwner ? (
+                <button
+                  type="button"
+                  onClick={() => setShowReportForm((v) => !v)}
+                  className="rounded-xl border border-red-200 bg-white px-4 py-2 text-sm font-bold text-red-700 hover:bg-red-50"
+                >
+                  {showReportForm ? "Fechar denúncia" : "Denunciar anúncio"}
+                </button>
+              ) : null}
+
               {waHref ? (
                 <a
                   href={waHref}
@@ -328,6 +386,64 @@ export default function ListingDetailPage() {
           </div>
 
           <div className="mt-4 whitespace-pre-wrap text-sm text-gray-700">{item.description}</div>
+
+          {showReportForm && !isOwner ? (
+            <div className="mt-6 rounded-2xl border border-red-200 bg-red-50 p-4">
+              <div className="text-sm font-extrabold text-red-800">Denunciar anúncio</div>
+              <p className="mt-1 text-sm text-red-700">
+                Envia uma denúncia se este anúncio violar as regras da plataforma.
+              </p>
+
+              <div className="mt-4 grid gap-4">
+                <label className="block">
+                  <span className={labelBase}>Motivo *</span>
+                  <select
+                    className={inputBase}
+                    value={reportReason}
+                    onChange={(e) => setReportReason(e.target.value as ReportReason)}
+                  >
+                    <option value="fraud">Fraude</option>
+                    <option value="offensive">Conteúdo ofensivo</option>
+                    <option value="prohibited">Produto proibido</option>
+                    <option value="false_info">Informação falsa</option>
+                    <option value="spam">Spam</option>
+                    <option value="other">Outro</option>
+                  </select>
+                </label>
+
+                <label className="block">
+                  <span className={labelBase}>Detalhes</span>
+                  <textarea
+                    className={inputBase}
+                    style={{ minHeight: 120, resize: "vertical" }}
+                    maxLength={1000}
+                    value={reportDetails}
+                    onChange={(e) => setReportDetails(e.target.value)}
+                    placeholder="Explica o problema, se necessário..."
+                  />
+                </label>
+              </div>
+
+              <div className="mt-4 flex flex-wrap gap-2">
+                <button
+                  type="button"
+                  onClick={handleSubmitReport}
+                  disabled={reporting}
+                  className="rounded-xl bg-red-600 px-4 py-2 text-sm font-extrabold text-white hover:opacity-95 disabled:opacity-60"
+                >
+                  {reporting ? "A enviar..." : "Enviar denúncia"}
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => setShowReportForm(false)}
+                  className="rounded-xl border border-gray-200 bg-white px-4 py-2 text-sm font-semibold hover:bg-gray-50"
+                >
+                  Cancelar
+                </button>
+              </div>
+            </div>
+          ) : null}
 
           {editing && isOwner && (
             <div className="mt-6 rounded-2xl border border-gray-200 bg-gray-50 p-4">

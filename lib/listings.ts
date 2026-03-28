@@ -7,6 +7,7 @@ import {
   getDoc,
   getDocs,
   limit as qLimit,
+  orderBy,
   query,
   serverTimestamp,
   updateDoc,
@@ -44,7 +45,7 @@ export type Listing = {
   contactClicks?: number;
 
   plan?: UserPlan;
-  status?: "active" | "expired" | "sold";
+  status?: "active" | "expired" | "sold" | "hidden_by_admin";
   expiresAt?: any;
   featured?: boolean;
   featuredPlan?: "24h" | "7d" | "30d";
@@ -127,6 +128,7 @@ function sortByCreatedAtDesc(items: Listing[]) {
 function isPublicVisibleListing(data: any, now: Date): boolean {
   if (data?.status === "expired") return false;
   if (data?.status === "sold") return false;
+  if (data?.status === "hidden_by_admin") return false;
   if (data?.status && data?.status !== "active") return false;
 
   const expiresAt = data?.expiresAt;
@@ -148,23 +150,60 @@ function isPublicVisibleListing(data: any, now: Date): boolean {
 export async function fetchListings(opts?: { limit?: number; category?: string }): Promise<Listing[]> {
   const take = opts?.limit ?? 50;
   const cat = String(opts?.category ?? "").trim();
-
-  const q = cat
-    ? query(collection(db, "listings"), where("category", "==", cat), qLimit(take))
-    : query(collection(db, "listings"), qLimit(take));
-
-  const snap = await getDocs(q);
-
   const now = new Date();
 
-  const items = snap.docs.map((d) => ({
-    id: d.id,
-    ...(d.data() as Omit<Listing, "id">),
-  })) as Listing[];
+  if (cat) {
+    const q = query(
+      collection(db, "listings"),
+      where("category", "==", cat),
+      qLimit(Math.max(take * 4, 50))
+    );
 
-  const visibleItems = items.filter((item) => isPublicVisibleListing(item, now));
+    const snap = await getDocs(q);
 
-  return sortByCreatedAtDesc(visibleItems);
+    const items = snap.docs.map((d) => ({
+      id: d.id,
+      ...(d.data() as Omit<Listing, "id">),
+    })) as Listing[];
+
+    const visibleItems = items.filter((item) => isPublicVisibleListing(item, now));
+
+    return sortByCreatedAtDesc(visibleItems).slice(0, take);
+  }
+
+  const featuredQ = query(
+    collection(db, "listings"),
+    where("featured", "==", true),
+    qLimit(Math.max(take * 2, 20))
+  );
+
+  const recentQ = query(
+    collection(db, "listings"),
+    orderBy("createdAt", "desc"),
+    qLimit(Math.max(take * 4, 50))
+  );
+
+  const [featuredSnap, recentSnap] = await Promise.all([
+    getDocs(featuredQ),
+    getDocs(recentQ),
+  ]);
+
+  const merged = new Map<string, Listing>();
+
+  for (const d of [...featuredSnap.docs, ...recentSnap.docs]) {
+    if (!merged.has(d.id)) {
+      merged.set(d.id, {
+        id: d.id,
+        ...(d.data() as Omit<Listing, "id">),
+      });
+    }
+  }
+
+  const visibleItems = Array.from(merged.values()).filter((item) =>
+    isPublicVisibleListing(item, now)
+  );
+
+  return sortByCreatedAtDesc(visibleItems).slice(0, take);
 }
 
 export async function fetchListingById(id: string): Promise<Listing | null> {
@@ -191,6 +230,7 @@ export async function fetchMyListings(uid: string, opts?: { limit?: number }): P
 function isActiveAndNotExpired(data: any, now: Date): boolean {
   if (data?.status === "expired") return false;
   if (data?.status === "sold") return false;
+  if (data?.status === "hidden_by_admin") return false;
   if (data?.status && data?.status !== "active") return false;
 
   const expiresAt = data?.expiresAt;

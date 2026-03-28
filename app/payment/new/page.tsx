@@ -62,7 +62,13 @@ export default function NewPaymentPage() {
     setError(null);
     setUploading(true);
     try {
-      await uploadPaymentProof({ paymentId, file });
+      if (!user?.uid) {
+      setError("Faz login primeiro.");
+      setUploading(false);
+      return;
+    }
+
+    await uploadPaymentProof({ uid: user.uid, paymentId, file });
       alert("Comprovativo enviado ✅");
     } catch (e: any) {
       setError(e?.message ?? "Erro ao enviar comprovativo.");

@@ -1,0 +1,96 @@
+import { onRequest } from "firebase-functions/v2/https";
+import { defineSecret } from "firebase-functions/params";
+import * as admin from "firebase-admin";
+import Stripe from "stripe";
+
+if (admin.apps.length === 0) {
+  admin.initializeApp();
+}
+
+const stripeSecretKey = defineSecret("STRIPE_SECRET_KEY");
+const stripeWebhookSecret = defineSecret("STRIPE_WEBHOOK_SECRET");
+
+export const stripeWebhook = onRequest(
+  {
+    secrets: [stripeSecretKey, stripeWebhookSecret],
+  },
+  async (req, res) => {
+    if (req.method !== "POST") {
+      res.status(405).send("Method Not Allowed");
+      return;
+    }
+
+    const signature = req.headers["stripe-signature"];
+    if (!signature || Array.isArray(signature)) {
+      res.status(400).send("Missing stripe-signature header");
+      return;
+    }
+
+    const stripe = new Stripe(stripeSecretKey.value());
+
+    let event: Stripe.Event;
+
+    try {
+      event = stripe.webhooks.constructEvent(
+        req.rawBody,
+        signature,
+        stripeWebhookSecret.value()
+      );
+    } catch (err) {
+      console.error("Invalid Stripe webhook signature:", err);
+      res.status(400).send("Webhook signature verification failed");
+      return;
+    }
+
+    try {
+      if (event.type === "checkout.session.completed") {
+        const session = event.data.object as Stripe.Checkout.Session;
+
+        const uid = String(session.metadata?.uid || "").trim();
+        const plan = String(session.metadata?.plan || "").trim();
+
+        if (!uid) {
+          console.error("Missing uid in checkout session metadata");
+          res.status(400).send("Missing uid metadata");
+          return;
+        }
+
+        if (plan !== "monthly" && plan !== "annual") {
+          console.error("Invalid plan in checkout session metadata:", plan);
+          res.status(400).send("Invalid plan metadata");
+          return;
+        }
+
+        const now = admin.firestore.Timestamp.now();
+        const days = plan === "annual" ? 365 : 30;
+        const expiresAt = admin.firestore.Timestamp.fromMillis(
+          now.toMillis() + days * 24 * 60 * 60 * 1000
+        );
+
+        await admin.firestore().collection("users").doc(uid).set(
+          {
+            plan,
+            planStatus: "active",
+            planExpiresAt: expiresAt,
+            customerId: session.customer ? String(session.customer) : null,
+            subscriptionId: session.subscription ? String(session.subscription) : null,
+            updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+          },
+          { merge: true }
+        );
+
+        console.log("Stripe checkout completed:", {
+          uid,
+          plan,
+          customerId: session.customer ?? null,
+          subscriptionId: session.subscription ?? null,
+        });
+      }
+
+      res.status(200).send("OK");
+    } catch (err) {
+      console.error("Stripe webhook handling error:", err);
+      res.status(500).send("Internal Server Error");
+    }
+  }
+);

@@ -18,11 +18,17 @@ export default function Header() {
       return;
     }
 
-    const unsub = subscribeUserConversations(user.uid, setItems);
+    const unsub = subscribeUserConversations(
+      user.uid,
+      setItems,
+      () => setItems([])
+    );
+
     return () => unsub();
   }, [user?.uid]);
 
   async function onLogout() {
+    setItems([]);
     await logout();
     router.replace("/");
   }

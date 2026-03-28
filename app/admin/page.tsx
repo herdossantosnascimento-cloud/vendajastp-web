@@ -4,10 +4,12 @@ import { useEffect, useState } from "react";
 import { onAuthStateChanged, getIdTokenResult } from "firebase/auth";
 import {
   collection,
+  doc,
   getDocs,
   limit,
   orderBy,
   query,
+  updateDoc,
   where,
   Timestamp,
 } from "firebase/firestore";
@@ -17,25 +19,49 @@ import { getDownloadURL, ref } from "firebase/storage";
 import { auth, db, functions, storage } from "@/lib/firebase";
 
 type PaymentPlan = "free" | "monthly" | "annual";
+type PaymentMethod = "sao_wallet" | "bank_transfer" | "stripe";
 
 type Payment = {
   id: string;
   uid?: string;
   plan?: PaymentPlan;
+  method?: PaymentMethod | string;
+  type?: string;
   status?: string;
+  paymentRef?: string;
+  listingId?: string;
+  featuredPlan?: string;
   proofPath?: string;
   createdAt?: Timestamp | null;
   updatedAt?: Timestamp | null;
   approvedAt?: Timestamp | null;
+  rejectedAt?: Timestamp | null;
   proofUploadedAt?: Timestamp | null;
 };
 
 type AdminSummary = {
   approvedPayments: number;
+  pendingPayments: number;
+  rejectedPayments: number;
   monthlySold: number;
   annualSold: number;
+  featuredSold: number;
   totalRevenue: number;
 };
+
+type Report = {
+  id: string;
+  listingId?: string;
+  listingTitle?: string;
+  listingOwnerId?: string;
+  reportedBy?: string;
+  reason?: string;
+  details?: string;
+  status?: string;
+  createdAt?: Timestamp | null;
+  updatedAt?: Timestamp | null;
+};
+
 
 const MONTHLY_PRICE = 200;
 const ANNUAL_PRICE = 1500;
@@ -43,37 +69,59 @@ const ANNUAL_PRICE = 1500;
 function formatDate(ts?: Timestamp | null) {
   if (!ts) return "-";
   try {
-    return ts.toDate().toLocaleString();
+    return ts.toDate().toLocaleString("pt-PT");
   } catch {
     return "-";
   }
 }
 
-function formatDb(value: number) {
+function formatMoney(value: number) {
   try {
-    return new Intl.NumberFormat("pt-PT").format(value) + " DB";
+    return new Intl.NumberFormat("pt-PT").format(value) + " STN";
   } catch {
-    return `${value} DB`;
+    return `${value} STN`;
   }
 }
 
+function getFeaturedAmount(featuredPlan?: string) {
+  if (featuredPlan === "24h") return 25;
+  if (featuredPlan === "7d") return 150;
+  if (featuredPlan === "30d") return 300;
+  return 0;
+}
+
 function buildAdminSummary(payments: Payment[]): AdminSummary {
-  const approvedPayments = payments.filter((payment) => payment.status === "approved");
+  const approved = payments.filter((payment) => payment.status === "approved");
+  const pending = payments.filter((payment) => payment.status === "pending_payment");
+  const rejected = payments.filter((payment) => payment.status === "rejected");
 
-  const monthlySold = approvedPayments.filter(
-    (payment) => payment.plan === "monthly"
+  const monthlySold = approved.filter(
+    (payment) => payment.type !== "featured" && payment.plan === "monthly"
   ).length;
 
-  const annualSold = approvedPayments.filter(
-    (payment) => payment.plan === "annual"
+  const annualSold = approved.filter(
+    (payment) => payment.type !== "featured" && payment.plan === "annual"
   ).length;
 
-  const totalRevenue = monthlySold * 200 + annualSold * 1500;
+  const featuredApproved = approved.filter((payment) => payment.type === "featured");
+  const featuredSold = featuredApproved.length;
+
+  const featuredRevenue = featuredApproved.reduce((sum, payment) => {
+    return sum + getFeaturedAmount(payment.featuredPlan);
+  }, 0);
+
+  const totalRevenue =
+    monthlySold * MONTHLY_PRICE +
+    annualSold * ANNUAL_PRICE +
+    featuredRevenue;
 
   return {
-    approvedPayments: approvedPayments.length,
+    approvedPayments: approved.length,
+    pendingPayments: pending.length,
+    rejectedPayments: rejected.length,
     monthlySold,
     annualSold,
+    featuredSold,
     totalRevenue,
   };
 }
@@ -81,23 +129,54 @@ function buildAdminSummary(payments: Payment[]): AdminSummary {
 function SummaryBox({
   title,
   value,
+  help,
 }: {
   title: string;
   value: string | number;
+  help?: string;
 }) {
   return (
-    <div
-      style={{
-        border: "1px solid #ddd",
-        borderRadius: 12,
-        padding: 16,
-        background: "#fff",
-      }}
-    >
-      <div style={{ fontSize: 14, opacity: 0.8 }}>{title}</div>
-      <div style={{ fontSize: 28, fontWeight: 700, marginTop: 8 }}>{value}</div>
+    <div className="rounded-2xl border border-gray-200 bg-white p-5 shadow-sm">
+      <div className="text-sm text-gray-500">{title}</div>
+      <div className="mt-2 text-3xl font-extrabold tracking-tight text-gray-900">
+        {value}
+      </div>
+      {help ? <div className="mt-2 text-xs text-gray-500">{help}</div> : null}
     </div>
   );
+}
+
+function statusBadgeClass(status?: string) {
+  if (status === "approved") {
+    return "bg-emerald-100 text-emerald-800 border border-emerald-200";
+  }
+
+  if (status === "pending_payment") {
+    return "bg-amber-100 text-amber-800 border border-amber-200";
+  }
+
+  if (status === "rejected") {
+    return "bg-rose-100 text-rose-800 border border-rose-200";
+  }
+
+  return "bg-gray-100 text-gray-700 border border-gray-200";
+}
+
+function paymentTypeLabel(payment: Payment) {
+  if (payment.type === "featured") {
+    return `Destaque${payment.featuredPlan ? ` (${payment.featuredPlan})` : ""}`;
+  }
+
+  if (payment.plan === "annual") return "Plano anual";
+  if (payment.plan === "monthly") return "Plano mensal";
+  return payment.type || payment.plan || "-";
+}
+
+function paymentMethodLabel(method?: string) {
+  if (method === "sao_wallet") return "São Wallet";
+  if (method === "bank_transfer") return "Transferência";
+  if (method === "stripe") return "Stripe";
+  return method || "-";
 }
 
 export default function AdminPage() {
@@ -105,12 +184,18 @@ export default function AdminPage() {
   const [checkingAdmin, setCheckingAdmin] = useState(true);
   const [isAdmin, setIsAdmin] = useState(false);
   const [error, setError] = useState("");
+  const [busyId, setBusyId] = useState("");
   const [pending, setPending] = useState<Payment[]>([]);
   const [recent, setRecent] = useState<Payment[]>([]);
+  const [pendingReports, setPendingReports] = useState<Report[]>([]);
+  const [recentReports, setRecentReports] = useState<Report[]>([]);
   const [summary, setSummary] = useState<AdminSummary>({
     approvedPayments: 0,
+    pendingPayments: 0,
+    rejectedPayments: 0,
     monthlySold: 0,
     annualSold: 0,
+    featuredSold: 0,
     totalRevenue: 0,
   });
 
@@ -130,16 +215,30 @@ export default function AdminPage() {
         limit(20)
       );
 
-      const approvedQ = query(
+      const summaryQ = query(
         collection(db, "payments"),
-        where("status", "==", "approved"),
-        orderBy("updatedAt", "desc")
+        orderBy("updatedAt", "desc"),
+        limit(200)
       );
 
-      const [pendingSnap, recentSnap, approvedSnap] = await Promise.all([
+      const pendingReportsQ = query(
+        collection(db, "reports"),
+        where("status", "==", "pending"),
+        limit(20)
+      );
+
+      const recentReportsQ = query(
+        collection(db, "reports"),
+        orderBy("updatedAt", "desc"),
+        limit(20)
+      );
+
+      const [pendingSnap, recentSnap, summarySnap, pendingReportsSnap, recentReportsSnap] = await Promise.all([
         getDocs(pendingQ),
         getDocs(recentQ),
-        getDocs(approvedQ),
+        getDocs(summaryQ),
+        getDocs(pendingReportsQ),
+        getDocs(recentReportsQ),
       ]);
 
       const pendingData: Payment[] = pendingSnap.docs.map((doc) => ({
@@ -152,14 +251,36 @@ export default function AdminPage() {
         ...(doc.data() as Omit<Payment, "id">),
       }));
 
-      const approvedData: Payment[] = approvedSnap.docs.map((doc) => ({
+      const summaryData: Payment[] = summarySnap.docs.map((doc) => ({
         id: doc.id,
         ...(doc.data() as Omit<Payment, "id">),
       }));
 
+      const pendingReportsData: Report[] = pendingReportsSnap.docs.map((doc) => ({
+        id: doc.id,
+        ...(doc.data() as Omit<Report, "id">),
+      }));
+
+      const recentReportsData: Report[] = recentReportsSnap.docs.map((doc) => ({
+        id: doc.id,
+        ...(doc.data() as Omit<Report, "id">),
+      }));
+
+      const sortedPendingReportsData = [...pendingReportsData].sort((a, b) => {
+        const aMs = a.createdAt?.toDate ? a.createdAt.toDate().getTime() : 0;
+        const bMs = b.createdAt?.toDate ? b.createdAt.toDate().getTime() : 0;
+        return bMs - aMs;
+      });
+
+      const filteredRecentReportsData = recentReportsData.filter(
+        (report) => report.status === "reviewed" || report.status === "resolved"
+      );
+
       setPending(pendingData);
       setRecent(recentData);
-      setSummary(buildAdminSummary(approvedData));
+      setPendingReports(sortedPendingReportsData);
+      setRecentReports(filteredRecentReportsData);
+      setSummary(buildAdminSummary(summaryData));
     } catch (err: any) {
       console.error(err);
       setError(err?.message || "Erro ao carregar pagamentos.");
@@ -205,192 +326,517 @@ export default function AdminPage() {
   async function approve(paymentId: string) {
     try {
       setError("");
+      setBusyId(paymentId);
       const fn = httpsCallable(functions, "approvePayment");
       await fn({ paymentId });
       await loadPayments();
     } catch (err: any) {
       console.error(err);
       setError(err?.message || "Erro ao aprovar pagamento.");
+    } finally {
+      setBusyId("");
     }
   }
 
-  async function repairUserPlan(uid?: string) {
+  async function repairUserPlan(uid?: string, itemId?: string) {
     try {
       setError("");
+
       if (!uid) {
         setError("UID em falta para reparar plano.");
         return;
       }
+
+      setBusyId(itemId || uid);
       const fn = httpsCallable(functions, "repairUserPlanFromLatestApprovedPayment");
-      const result = await fn({ uid });
-      console.log("repairUserPlan result:", result);
-      alert("Plano do utilizador reparado com sucesso.");
+      await fn({ uid });
       await loadPayments();
     } catch (err: any) {
       console.error(err);
       setError(err?.message || "Erro ao reparar plano do utilizador.");
+    } finally {
+      setBusyId("");
     }
   }
 
   async function reject(paymentId: string) {
     try {
       setError("");
+      setBusyId(paymentId);
       const fn = httpsCallable(functions, "rejectPayment");
       await fn({ paymentId });
       await loadPayments();
     } catch (err: any) {
       console.error(err);
       setError(err?.message || "Erro ao rejeitar pagamento.");
+    } finally {
+      setBusyId("");
     }
   }
 
-  async function openProof(proofPath?: string) {
+
+
+  async function reactivateListingByAdmin(listingId?: string, itemId?: string) {
+    try {
+      setError("");
+
+      if (!listingId) {
+        setError("Listing ID em falta.");
+        return;
+      }
+
+      setBusyId(itemId || listingId);
+      const fn = httpsCallable(functions, "reactivateListingByAdmin");
+      await fn({ listingId });
+      await loadPayments();
+    } catch (err: any) {
+      console.error(err);
+      setError(err?.message || "Erro ao reativar anúncio.");
+    } finally {
+      setBusyId("");
+    }
+  }
+
+  async function hideListingByAdmin(listingId?: string, itemId?: string) {
+    try {
+      setError("");
+
+      if (!listingId) {
+        setError("Listing ID em falta.");
+        return;
+      }
+
+      setBusyId(itemId || listingId);
+      const fn = httpsCallable(functions, "hideListingByAdmin");
+      await fn({ listingId });
+      await loadPayments();
+    } catch (err: any) {
+      console.error(err);
+      setError(err?.message || "Erro ao ocultar anúncio.");
+    } finally {
+      setBusyId("");
+    }
+  }
+
+  async function updateReportStatus(reportId: string, status: "reviewed" | "resolved") {
+    try {
+      setError("");
+      setBusyId(reportId);
+      await updateDoc(doc(db, "reports", reportId), {
+        status,
+        updatedAt: Timestamp.now(),
+      });
+      await loadPayments();
+    } catch (err: any) {
+      console.error(err);
+      setError(err?.message || "Erro ao atualizar denúncia.");
+    } finally {
+      setBusyId("");
+    }
+  }
+
+  async function openProof(proofPath?: string, itemId?: string) {
     try {
       if (!proofPath) return;
+      setBusyId(itemId || proofPath);
       const url = await getDownloadURL(ref(storage, proofPath));
       window.location.assign(url);
     } catch (err: any) {
       console.error(err);
       setError(err?.message || "Erro ao abrir comprovativo.");
+    } finally {
+      setBusyId("");
     }
   }
 
-  function Card({
-    p,
+  function ReportCard({ report }: { report: Report }) {
+    return (
+      <div className="rounded-2xl border border-gray-200 bg-white p-5 shadow-sm">
+        <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
+          <div className="space-y-2">
+            <div className="flex flex-wrap items-center gap-2">
+              <h3 className="text-lg font-bold text-gray-900">
+                {report.listingTitle || "Anúncio denunciado"}
+              </h3>
+              <span className="rounded-full border border-rose-200 bg-rose-100 px-2.5 py-1 text-xs font-semibold text-rose-800">
+                {report.status || "pending"}
+              </span>
+            </div>
+
+            <div className="text-sm text-gray-600">
+              <div><span className="font-medium text-gray-800">Report ID:</span> {report.id}</div>
+              <div><span className="font-medium text-gray-800">Listing ID:</span> {report.listingId || "-"}</div>
+              <div><span className="font-medium text-gray-800">Dono do anúncio:</span> {report.listingOwnerId || "-"}</div>
+              <div><span className="font-medium text-gray-800">Denunciado por:</span> {report.reportedBy || "-"}</div>
+              <div><span className="font-medium text-gray-800">Motivo:</span> {report.reason || "-"}</div>
+              <div><span className="font-medium text-gray-800">Criado em:</span> {formatDate(report.createdAt)}</div>
+              <div><span className="font-medium text-gray-800">Atualizado em:</span> {formatDate(report.updatedAt)}</div>
+            </div>
+
+            {report.details ? (
+              <div className="rounded-xl border border-gray-100 bg-gray-50 p-3 text-sm text-gray-700">
+                <span className="font-medium text-gray-800">Detalhes:</span> {report.details}
+              </div>
+            ) : null}
+          </div>
+
+          <div className="flex min-w-[180px] flex-col gap-3">
+            {report.listingId ? (
+              <a
+                href={`/listings/${report.listingId}`}
+                target="_blank"
+                rel="noreferrer"
+                className="rounded-xl border border-gray-300 px-4 py-2 text-center text-sm font-semibold text-gray-700 hover:bg-gray-50"
+              >
+                Abrir anúncio
+              </a>
+            ) : null}
+
+            {report.listingId ? (
+              <button
+                type="button"
+                onClick={() => hideListingByAdmin(report.listingId, report.id)}
+                disabled={busyId === report.id}
+                className="rounded-xl bg-rose-700 px-4 py-2 text-sm font-semibold text-white hover:bg-rose-800 disabled:opacity-60"
+              >
+                Ocultar anúncio
+              </button>
+            ) : null}
+
+            {report.listingId ? (
+              <button
+                type="button"
+                onClick={() => reactivateListingByAdmin(report.listingId, report.id)}
+                disabled={busyId === report.id}
+                className="rounded-xl bg-sky-700 px-4 py-2 text-sm font-semibold text-white hover:bg-sky-800 disabled:opacity-60"
+              >
+                Reativar anúncio
+              </button>
+            ) : null}
+
+            {report.status === "pending" ? (
+              <button
+                type="button"
+                onClick={() => updateReportStatus(report.id, "reviewed")}
+                disabled={busyId === report.id}
+                className="rounded-xl bg-amber-600 px-4 py-2 text-sm font-semibold text-white hover:bg-amber-700 disabled:opacity-60"
+              >
+                Marcar como revista
+              </button>
+            ) : null}
+
+            {(report.status === "pending" || report.status === "reviewed") ? (
+              <button
+                type="button"
+                onClick={() => updateReportStatus(report.id, "resolved")}
+                disabled={busyId === report.id}
+                className="rounded-xl bg-emerald-700 px-4 py-2 text-sm font-semibold text-white hover:bg-emerald-800 disabled:opacity-60"
+              >
+                Marcar como resolvida
+              </button>
+            ) : null}
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  function PaymentCard({
+    payment,
     showApprove = false,
     showReject = false,
     showRepair = false,
   }: {
-    p: Payment;
+    payment: Payment;
     showApprove?: boolean;
     showReject?: boolean;
     showRepair?: boolean;
   }) {
+    const isBusy = busyId === payment.id || busyId === payment.uid || busyId === payment.proofPath;
+
     return (
-      <div
-        style={{
-          border: "1px solid #ddd",
-          borderRadius: 12,
-          padding: 12,
-          background: "#fff",
-        }}
-      >
-        <div><b>ID:</b> {p.id}</div>
-        <div><b>UID:</b> {p.uid || "-"}</div>
-        <div><b>Plano:</b> {p.plan || "-"}</div>
-        <div><b>Status:</b> {p.status || "-"}</div>
-        <div><b>Criado em:</b> {formatDate(p.createdAt)}</div>
-        <div><b>Atualizado em:</b> {formatDate(p.updatedAt)}</div>
-        <div><b>Aprovado em:</b> {formatDate(p.approvedAt)}</div>
-        <div><b>Proof uploaded:</b> {formatDate(p.proofUploadedAt)}</div>
-        <div style={{ marginTop: 8 }}>
-          <b>Comprovativo:</b> {p.proofPath ? "✅ enviado" : "❌ não enviado"}
+      <div className="rounded-2xl border border-gray-200 bg-white p-5 shadow-sm">
+        <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
+          <div className="space-y-2">
+            <div className="flex flex-wrap items-center gap-2">
+              <h3 className="text-lg font-bold text-gray-900">
+                {paymentTypeLabel(payment)}
+              </h3>
+              <span className={`rounded-full px-2.5 py-1 text-xs font-semibold ${statusBadgeClass(payment.status)}`}>
+                {payment.status || "-"}
+              </span>
+            </div>
+
+            <div className="text-sm text-gray-600">
+              <div><span className="font-medium text-gray-800">ID:</span> {payment.id}</div>
+              <div><span className="font-medium text-gray-800">UID:</span> {payment.uid || "-"}</div>
+              <div><span className="font-medium text-gray-800">Método:</span> {paymentMethodLabel(payment.method)}</div>
+              <div><span className="font-medium text-gray-800">Referência:</span> {payment.paymentRef || "-"}</div>
+              <div><span className="font-medium text-gray-800">Listing ID:</span> {payment.listingId || "-"}</div>
+              <div><span className="font-medium text-gray-800">Criado em:</span> {formatDate(payment.createdAt)}</div>
+              <div><span className="font-medium text-gray-800">Atualizado em:</span> {formatDate(payment.updatedAt)}</div>
+              <div><span className="font-medium text-gray-800">Aprovado em:</span> {formatDate(payment.approvedAt)}</div>
+              <div><span className="font-medium text-gray-800">Rejeitado em:</span> {formatDate(payment.rejectedAt)}</div>
+              <div><span className="font-medium text-gray-800">Comprovativo enviado em:</span> {formatDate(payment.proofUploadedAt)}</div>
+            </div>
+          </div>
+
+          <div className="min-w-[180px] rounded-2xl border border-gray-100 bg-gray-50 p-4 text-sm">
+            <div className="text-gray-500">Comprovativo</div>
+            <div className="mt-1 font-semibold text-gray-900">
+              {payment.proofPath ? "✅ Enviado" : "❌ Não enviado"}
+            </div>
+            {payment.proofPath ? (
+              <div className="mt-2 break-all text-xs text-gray-500">
+                {payment.proofPath}
+              </div>
+            ) : null}
+          </div>
         </div>
 
-        <div style={{ display: "flex", gap: 8, marginTop: 12, flexWrap: "wrap" }}>
-          {p.proofPath && (
-            <button onClick={() => openProof(p.proofPath)}>
+        <div className="mt-4 flex flex-wrap gap-3">
+          {payment.proofPath ? (
+            <button
+              type="button"
+              onClick={() => openProof(payment.proofPath, payment.id)}
+              disabled={isBusy}
+              className="rounded-xl border border-gray-300 px-4 py-2 text-sm font-semibold text-gray-700 hover:bg-gray-50 disabled:opacity-60"
+            >
               Ver comprovativo
             </button>
-          )}
+          ) : null}
 
-          {showApprove && p.proofPath && (
-            <button onClick={() => approve(p.id)}>
+          {showApprove && payment.proofPath ? (
+            <button
+              type="button"
+              onClick={() => approve(payment.id)}
+              disabled={isBusy}
+              className="rounded-xl bg-emerald-700 px-4 py-2 text-sm font-semibold text-white hover:bg-emerald-800 disabled:opacity-60"
+            >
               Aprovar pagamento
             </button>
-          )}
+          ) : null}
 
-          {showReject && (
-            <button onClick={() => reject(p.id)}>
+          {showReject ? (
+            <button
+              type="button"
+              onClick={() => reject(payment.id)}
+              disabled={isBusy}
+              className="rounded-xl bg-rose-700 px-4 py-2 text-sm font-semibold text-white hover:bg-rose-800 disabled:opacity-60"
+            >
               Rejeitar pagamento
             </button>
-          )}
+          ) : null}
 
-          {showRepair && (
-            <button onClick={() => repairUserPlan(p.uid)}>
+          {showRepair ? (
+            <button
+              type="button"
+              onClick={() => repairUserPlan(payment.uid, payment.id)}
+              disabled={isBusy || !payment.uid}
+              className="rounded-xl bg-sky-700 px-4 py-2 text-sm font-semibold text-white hover:bg-sky-800 disabled:opacity-60"
+            >
               Reparar plano do utilizador
             </button>
-          )}
+          ) : null}
         </div>
       </div>
     );
   }
 
   if (checkingAdmin) {
-    return <div style={{ padding: 16 }}>A validar acesso admin...</div>;
+    return (
+      <div className="mx-auto max-w-6xl px-6 py-10">
+        <div className="rounded-2xl border border-gray-200 bg-white p-6 text-sm text-gray-600 shadow-sm">
+          A validar acesso admin...
+        </div>
+      </div>
+    );
   }
 
   if (!isAdmin) {
     return (
-      <div style={{ padding: 16 }}>
-        <h1>Admin</h1>
-        <p>{error || "Acesso negado."}</p>
+      <div className="mx-auto max-w-4xl px-6 py-10">
+        <div className="rounded-2xl border border-rose-200 bg-white p-6 shadow-sm">
+          <h1 className="text-2xl font-extrabold tracking-tight text-gray-900">Admin</h1>
+          <p className="mt-3 text-sm text-rose-700">{error || "Acesso negado."}</p>
+        </div>
       </div>
     );
   }
 
   if (loading) {
-    return <div style={{ padding: 16 }}>A carregar pagamentos...</div>;
+    return (
+      <div className="mx-auto max-w-6xl px-6 py-10">
+        <div className="rounded-2xl border border-gray-200 bg-white p-6 text-sm text-gray-600 shadow-sm">
+          A carregar pagamentos...
+        </div>
+      </div>
+    );
   }
 
   return (
-    <div style={{ padding: 16, maxWidth: 1000 }}>
-      <h1>Admin</h1>
-      <p>Resumo da plataforma + pagamentos pendentes + recentes.</p>
-
-      {error && (
-        <div style={{ padding: 12, margin: "12px 0", border: "1px solid #ddd" }}>
-          <b>Erro:</b> {error}
+    <main className="mx-auto max-w-6xl px-6 py-10">
+      <div className="flex flex-col gap-4 md:flex-row md:items-end md:justify-between">
+        <div>
+          <h1 className="text-3xl font-extrabold tracking-tight text-gray-900">
+            Dashboard Admin
+          </h1>
+          <p className="mt-2 text-gray-600">
+            Resumo financeiro, pagamentos pendentes e últimos movimentos.
+          </p>
         </div>
-      )}
 
-      <div
-        style={{
-          display: "grid",
-          gap: 12,
-          gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))",
-          margin: "16px 0 24px",
-        }}
-      >
+        <button
+          type="button"
+          onClick={loadPayments}
+          className="rounded-xl border border-gray-300 bg-white px-4 py-2 text-sm font-semibold text-gray-700 hover:bg-gray-50"
+        >
+          Atualizar dados
+        </button>
+      </div>
+
+      {error ? (
+        <div className="mt-6 rounded-2xl border border-rose-200 bg-rose-50 p-4 text-sm text-rose-800">
+          <span className="font-semibold">Erro:</span> {error}
+        </div>
+      ) : null}
+
+      <section className="mt-8 grid gap-4 md:grid-cols-2 xl:grid-cols-3">
         <SummaryBox
           title="Pagamentos aprovados"
           value={summary.approvedPayments}
         />
         <SummaryBox
+          title="Pagamentos pendentes"
+          value={summary.pendingPayments}
+        />
+        <SummaryBox
+          title="Pagamentos rejeitados"
+          value={summary.rejectedPayments}
+        />
+        <SummaryBox
           title="Planos mensais vendidos"
           value={summary.monthlySold}
+          help={`${formatMoney(MONTHLY_PRICE)} por plano`}
         />
         <SummaryBox
           title="Planos anuais vendidos"
           value={summary.annualSold}
+          help={`${formatMoney(ANNUAL_PRICE)} por plano`}
+        />
+        <SummaryBox
+          title="Destaques aprovados"
+          value={summary.featuredSold}
+          help="24h / 7d / 30d"
         />
         <SummaryBox
           title="Receita total"
-          value={formatDb(summary.totalRevenue)}
+          value={formatMoney(summary.totalRevenue)}
+          help="Com base nos pagamentos aprovados"
         />
-      </div>
+      </section>
 
-      <h2>Pendentes</h2>
-      {pending.length === 0 ? (
-        <p>Sem pendentes.</p>
-      ) : (
-        <div style={{ display: "grid", gap: 12 }}>
-          {pending.map((p) => (
-            <Card key={p.id} p={p} showApprove showReject />
-          ))}
+      <section className="mt-10">
+        <div className="mb-4 flex items-center justify-between">
+          <h2 className="text-2xl font-bold tracking-tight text-gray-900">
+            Pagamentos pendentes
+          </h2>
+          <span className="rounded-full bg-amber-100 px-3 py-1 text-sm font-semibold text-amber-800">
+            {pending.length} pendente(s)
+          </span>
         </div>
-      )}
 
-      <h2 style={{ marginTop: 20 }}>Recentes (últimos 20)</h2>
-      {recent.length === 0 ? (
-        <p>Sem recentes.</p>
-      ) : (
-        <div style={{ display: "grid", gap: 12 }}>
-          {recent.map((p) => (
-            <Card key={p.id} p={p} showRepair />
-          ))}
+        {pending.length === 0 ? (
+          <div className="rounded-2xl border border-gray-200 bg-white p-6 text-sm text-gray-600 shadow-sm">
+            Sem pagamentos pendentes.
+          </div>
+        ) : (
+          <div className="grid gap-4">
+            {pending.map((payment) => (
+              <PaymentCard
+                key={payment.id}
+                payment={payment}
+                showApprove
+                showReject
+              />
+            ))}
+          </div>
+        )}
+      </section>
+
+      <section className="mt-10">
+        <div className="mb-4 flex items-center justify-between">
+          <h2 className="text-2xl font-bold tracking-tight text-gray-900">
+            Recentes
+          </h2>
+          <span className="rounded-full bg-gray-100 px-3 py-1 text-sm font-semibold text-gray-700">
+            últimos 20
+          </span>
         </div>
-      )}
-    </div>
+
+        {recent.length === 0 ? (
+          <div className="rounded-2xl border border-gray-200 bg-white p-6 text-sm text-gray-600 shadow-sm">
+            Sem pagamentos recentes.
+          </div>
+        ) : (
+          <div className="grid gap-4">
+            {recent.map((payment) => (
+              <PaymentCard
+                key={payment.id}
+                payment={payment}
+                showRepair={payment.status === "approved" && (payment.plan === "monthly" || payment.plan === "annual")}
+              />
+            ))}
+          </div>
+        )}
+      </section>
+
+
+      <section className="mt-10">
+        <div className="mb-4 flex items-center justify-between">
+          <h2 className="text-2xl font-bold tracking-tight text-gray-900">
+            Denúncias pendentes
+          </h2>
+          <span className="rounded-full bg-rose-100 px-3 py-1 text-sm font-semibold text-rose-800">
+            {pendingReports.length} pendente(s)
+          </span>
+        </div>
+
+        {pendingReports.length === 0 ? (
+          <div className="rounded-2xl border border-gray-200 bg-white p-6 text-sm text-gray-600 shadow-sm">
+            Sem denúncias pendentes.
+          </div>
+        ) : (
+          <div className="grid gap-4">
+            {pendingReports.map((report) => (
+              <ReportCard key={report.id} report={report} />
+            ))}
+          </div>
+        )}
+      </section>
+
+      <section className="mt-10">
+        <div className="mb-4 flex items-center justify-between">
+          <h2 className="text-2xl font-bold tracking-tight text-gray-900">
+            Denúncias recentes
+          </h2>
+          <span className="rounded-full bg-gray-100 px-3 py-1 text-sm font-semibold text-gray-700">
+            últimas 20
+          </span>
+        </div>
+
+        {recentReports.length === 0 ? (
+          <div className="rounded-2xl border border-gray-200 bg-white p-6 text-sm text-gray-600 shadow-sm">
+            Sem denúncias recentes.
+          </div>
+        ) : (
+          <div className="grid gap-4">
+            {recentReports.map((report) => (
+              <ReportCard key={report.id} report={report} />
+            ))}
+          </div>
+        )}
+      </section>
+    </main>
   );
 }

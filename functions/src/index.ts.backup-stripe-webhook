@@ -1,0 +1,476 @@
+import { onCall, HttpsError } from "firebase-functions/v2/https";
+import * as admin from "firebase-admin";
+
+admin.initializeApp();
+
+export const approvePayment = onCall(async (request) => {
+  const auth = request.auth;
+  if (!auth) {
+    throw new HttpsError("unauthenticated", "Login required.");
+  }
+
+  const isAdmin = (auth.token as any)?.admin === true;
+  if (!isAdmin) {
+    throw new HttpsError("permission-denied", "Admin only.");
+  }
+
+  const paymentId = (request.data as any)?.paymentId as string;
+  if (!paymentId) {
+    throw new HttpsError("invalid-argument", "paymentId required.");
+  }
+
+  const db = admin.firestore();
+  const payRef = db.collection("payments").doc(paymentId);
+  const paySnap = await payRef.get();
+
+  if (!paySnap.exists) {
+    throw new HttpsError("not-found", "Payment not found.");
+  }
+
+  const pay = paySnap.data() as any;
+
+  if (pay.status === "approved") {
+    return { ok: true, alreadyApproved: true };
+  }
+
+  const uid = pay.uid as string;
+
+  if (!uid) {
+    throw new HttpsError("failed-precondition", "Invalid payment data.");
+  }
+
+  if (!pay.proofPath) {
+    throw new HttpsError("failed-precondition", "Payment proof is required before approval.");
+  }
+
+  if (pay.type === "featured") {
+    const featuredPlan = String(pay.featuredPlan || "").trim() as "24h" | "7d" | "30d";
+    const listingId = String(pay.listingId || "").trim();
+
+    if (!listingId || !["24h", "7d", "30d"].includes(featuredPlan)) {
+      throw new HttpsError("failed-precondition", "Invalid featured payment data.");
+    }
+
+    const listingRef = db.collection("listings").doc(listingId);
+    const listingSnap = await listingRef.get();
+
+    if (!listingSnap.exists) {
+      throw new HttpsError("not-found", "Listing not found.");
+    }
+
+    const listing = listingSnap.data() as any;
+
+    if (!listing?.ownerId || listing.ownerId !== uid) {
+      throw new HttpsError("permission-denied", "Listing does not belong to payment user.");
+    }
+
+    const durationMs =
+      featuredPlan === "24h"
+        ? 24 * 60 * 60 * 1000
+        : featuredPlan === "7d"
+          ? 7 * 24 * 60 * 60 * 1000
+          : 30 * 24 * 60 * 60 * 1000;
+
+    const featuredUntil = admin.firestore.Timestamp.fromMillis(
+      Date.now() + durationMs
+    );
+
+    await db.runTransaction(async (tx) => {
+      tx.update(payRef, {
+        status: "approved",
+        approvedAt: admin.firestore.FieldValue.serverTimestamp(),
+        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+      });
+
+      tx.set(
+        listingRef,
+        {
+          featured: true,
+          featuredPlan,
+          featuredUntil,
+          featuredApprovedAt: admin.firestore.FieldValue.serverTimestamp(),
+          updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+        },
+        { merge: true }
+      );
+    });
+
+    return { ok: true, type: "featured", listingId, featuredPlan };
+  }
+
+  const plan = pay.plan as "monthly" | "annual";
+
+  if (plan !== "monthly" && plan !== "annual") {
+    throw new HttpsError("failed-precondition", "Invalid payment data.");
+  }
+
+  const now = admin.firestore.Timestamp.now();
+  const days = plan === "annual" ? 365 : 30;
+  const expiresAt = admin.firestore.Timestamp.fromMillis(
+    now.toMillis() + days * 24 * 60 * 60 * 1000
+  );
+
+  await db.runTransaction(async (tx) => {
+    tx.update(payRef, {
+      status: "approved",
+      approvedAt: admin.firestore.FieldValue.serverTimestamp(),
+      updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+    });
+
+    tx.set(
+      db.collection("users").doc(uid),
+      {
+        plan,
+        planStatus: "active",
+        planExpiresAt: expiresAt,
+        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+      },
+      { merge: true }
+    );
+  });
+
+  return { ok: true, type: "plan", plan };
+});
+
+
+export const incrementListingViews = onCall(async (request) => {
+  const listingId = String((request.data as any)?.listingId || "").trim();
+
+  if (!listingId) {
+    throw new HttpsError("invalid-argument", "listingId required.");
+  }
+
+  const db = admin.firestore();
+  const listingRef = db.collection("listings").doc(listingId);
+  const listingSnap = await listingRef.get();
+
+  if (!listingSnap.exists) {
+    throw new HttpsError("not-found", "Listing not found.");
+  }
+
+  const listing = listingSnap.data() as any;
+
+  if (listing?.status === "expired" || listing?.status === "sold" || listing?.status === "hidden_by_admin") {
+    return { ok: true, skipped: true };
+  }
+
+  await listingRef.set(
+    {
+      views: admin.firestore.FieldValue.increment(1),
+      updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+    },
+    { merge: true }
+  );
+
+  return { ok: true };
+});
+
+export const attachPaymentProof = onCall(async (request) => {
+  const auth = request.auth;
+  if (!auth) {
+    throw new HttpsError("unauthenticated", "Login required.");
+  }
+
+  const uid = auth.uid;
+
+  const paymentId = (request.data as any)?.paymentId as string;
+  const proofPath = (request.data as any)?.proofPath as string;
+
+  if (!paymentId) {
+    throw new HttpsError("invalid-argument", "paymentId required.");
+  }
+
+  if (!proofPath) {
+    throw new HttpsError("invalid-argument", "proofPath required.");
+  }
+
+  const prefix = `payment_proofs/${uid}/${paymentId}/`;
+  if (!proofPath.startsWith(prefix) || proofPath.includes("..")) {
+    throw new HttpsError("invalid-argument", "Invalid proofPath.");
+  }
+
+  const db = admin.firestore();
+  const payRef = db.collection("payments").doc(paymentId);
+  const snap = await payRef.get();
+
+  if (!snap.exists) {
+    throw new HttpsError("not-found", "Payment not found.");
+  }
+
+  const pay = snap.data() as any;
+
+  if (pay.uid !== uid) {
+    throw new HttpsError("permission-denied", "Not allowed.");
+  }
+
+  if (pay.status === "approved") {
+    throw new HttpsError("failed-precondition", "Payment already approved.");
+  }
+
+  await payRef.update({
+    proofPath,
+    proofUploadedAt: admin.firestore.FieldValue.serverTimestamp(),
+    updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+  });
+
+  return { ok: true };
+});
+
+export const rejectPayment = onCall(async (request) => {
+  const auth = request.auth;
+  if (!auth) {
+    throw new HttpsError("unauthenticated", "Login required.");
+  }
+
+  const isAdmin = (auth.token as any)?.admin === true;
+  if (!isAdmin) {
+    throw new HttpsError("permission-denied", "Admin only.");
+  }
+
+  const paymentId = (request.data as any)?.paymentId as string;
+  if (!paymentId) {
+    throw new HttpsError("invalid-argument", "paymentId required.");
+  }
+
+  const db = admin.firestore();
+  const payRef = db.collection("payments").doc(paymentId);
+  const paySnap = await payRef.get();
+
+  if (!paySnap.exists) {
+    throw new HttpsError("not-found", "Payment not found.");
+  }
+
+  const pay = paySnap.data() as any;
+
+  if (pay.status === "approved") {
+    throw new HttpsError("failed-precondition", "Payment already approved.");
+  }
+
+  if (pay.status === "rejected") {
+    return { ok: true, alreadyRejected: true };
+  }
+
+  await payRef.set(
+    {
+      status: "rejected",
+      rejectedAt: admin.firestore.FieldValue.serverTimestamp(),
+      updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+    },
+    { merge: true }
+  );
+
+  return { ok: true };
+});
+
+
+export const repairUserPlanFromLatestApprovedPayment = onCall(async (request) => {
+  const auth = request.auth;
+  if (!auth) {
+    throw new HttpsError("unauthenticated", "Login required.");
+  }
+
+  const isAdmin = (auth.token as any)?.admin === true;
+  if (!isAdmin) {
+    throw new HttpsError("permission-denied", "Admin only.");
+  }
+
+  const uid = String((request.data as any)?.uid || "").trim();
+  if (!uid) {
+    throw new HttpsError("invalid-argument", "uid required.");
+  }
+
+  const db = admin.firestore();
+
+  const snap = await db
+    .collection("payments")
+    .where("uid", "==", uid)
+    .limit(100)
+    .get();
+
+  if (snap.empty) {
+    throw new HttpsError("not-found", "No payments found for this uid.");
+  }
+
+  const approved = snap.docs
+    .map((d) => ({ id: d.id, ...(d.data() as any) }))
+    .filter((p) => p.status === "approved" && (p.plan === "monthly" || p.plan === "annual"));
+
+  if (!approved.length) {
+    throw new HttpsError("failed-precondition", "No approved monthly/annual payment found for this uid.");
+  }
+
+  approved.sort((a, b) => {
+    const at = a?.updatedAt?.seconds ?? a?.approvedAt?.seconds ?? a?.createdAt?.seconds ?? 0;
+    const bt = b?.updatedAt?.seconds ?? b?.approvedAt?.seconds ?? b?.createdAt?.seconds ?? 0;
+    return bt - at;
+  });
+
+  const latest = approved[0];
+  const plan = latest.plan as "monthly" | "annual";
+
+  const now = admin.firestore.Timestamp.now();
+  const days = plan === "annual" ? 365 : 30;
+  const expiresAt = admin.firestore.Timestamp.fromMillis(
+    now.toMillis() + days * 24 * 60 * 60 * 1000
+  );
+
+  await db.collection("users").doc(uid).set(
+    {
+      plan,
+      planStatus: "active",
+      planExpiresAt: expiresAt,
+      updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+      planUpdatedAt: admin.firestore.FieldValue.serverTimestamp(),
+    },
+    { merge: true }
+  );
+
+  return {
+    ok: true,
+    uid,
+    plan,
+  };
+});
+
+
+export const hideListingByAdmin = onCall(async (request) => {
+  if (request.auth?.token?.admin !== true) {
+    throw new HttpsError("permission-denied", "Apenas admin pode ocultar anúncios.");
+  }
+
+  const listingId = String(request.data?.listingId ?? "").trim();
+
+  if (!listingId) {
+    throw new HttpsError("invalid-argument", "listingId é obrigatório.");
+  }
+
+  const db = admin.firestore();
+  const listingRef = db.collection("listings").doc(listingId);
+  const listingSnap = await listingRef.get();
+
+  if (!listingSnap.exists) {
+    throw new HttpsError("not-found", "Anúncio não encontrado.");
+  }
+
+  await listingRef.update({
+    status: "hidden_by_admin",
+    updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+  });
+
+  return {
+    ok: true,
+    listingId,
+    status: "hidden_by_admin",
+  };
+});
+
+
+export const reactivateListingByAdmin = onCall(async (request) => {
+  if (request.auth?.token?.admin !== true) {
+    throw new HttpsError("permission-denied", "Apenas admin pode reativar anúncios.");
+  }
+
+  const listingId = String(request.data?.listingId ?? "").trim();
+
+  if (!listingId) {
+    throw new HttpsError("invalid-argument", "listingId é obrigatório.");
+  }
+
+  const db = admin.firestore();
+  const listingRef = db.collection("listings").doc(listingId);
+  const listingSnap = await listingRef.get();
+
+  if (!listingSnap.exists) {
+    throw new HttpsError("not-found", "Anúncio não encontrado.");
+  }
+
+  await listingRef.update({
+    status: "active",
+    updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+  });
+
+  return {
+    ok: true,
+    listingId,
+    status: "active",
+  };
+});
+
+export const renewListing = onCall(async (request) => {
+  const auth = request.auth;
+  if (!auth) {
+    throw new HttpsError("unauthenticated", "Login required.");
+  }
+
+  const uid = auth.uid;
+  const listingId = String((request.data as any)?.listingId || "").trim();
+
+  if (!listingId) {
+    throw new HttpsError("invalid-argument", "listingId required.");
+  }
+
+  const db = admin.firestore();
+
+  const listingRef = db.collection("listings").doc(listingId);
+  const listingSnap = await listingRef.get();
+
+  if (!listingSnap.exists) {
+    throw new HttpsError("not-found", "Listing not found.");
+  }
+
+  const listing = listingSnap.data() as any;
+
+  if (!listing.ownerId || listing.ownerId !== uid) {
+    throw new HttpsError("permission-denied", "You do not own this listing.");
+  }
+
+  const userRef = db.collection("users").doc(uid);
+  const userSnap = await userRef.get();
+  const userData = userSnap.exists ? (userSnap.data() as any) : {};
+
+  const rawPlan = userData?.plan === "pro" ? "monthly" : userData?.plan;
+  const planStatus = userData?.planStatus;
+  const planExpiresAt = userData?.planExpiresAt;
+
+  let effectivePlan: "free" | "monthly" | "annual" = "free";
+
+  if (
+    (rawPlan === "monthly" || rawPlan === "annual") &&
+    planStatus === "active" &&
+    planExpiresAt &&
+    typeof planExpiresAt.toDate === "function" &&
+    planExpiresAt.toDate().getTime() > Date.now()
+  ) {
+    effectivePlan = rawPlan;
+  }
+
+  if (effectivePlan === "free") {
+    throw new HttpsError(
+      "failed-precondition",
+      "Active paid plan required to renew listing."
+    );
+  }
+
+  const days = effectivePlan === "annual" ? 90 : 30;
+  const now = admin.firestore.Timestamp.now();
+  const newExpiresAt = admin.firestore.Timestamp.fromMillis(
+    now.toMillis() + days * 24 * 60 * 60 * 1000
+  );
+
+  await listingRef.set(
+    {
+      status: "active",
+      expiresAt: newExpiresAt,
+      renewedAt: admin.firestore.FieldValue.serverTimestamp(),
+      updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+    },
+    { merge: true }
+  );
+
+  return {
+    ok: true,
+    listingId,
+    effectivePlan,
+    expiresAt: newExpiresAt,
+  };
+});

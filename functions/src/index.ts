@@ -150,7 +150,7 @@ export const incrementListingViews = onCall(async (request) => {
 
   const listing = listingSnap.data() as any;
 
-  if (listing?.status === "expired" || listing?.status === "sold") {
+  if (listing?.status === "expired" || listing?.status === "sold" || listing?.status === "hidden_by_admin") {
     return { ok: true, skipped: true };
   }
 
@@ -332,6 +332,70 @@ export const repairUserPlanFromLatestApprovedPayment = onCall(async (request) =>
   };
 });
 
+
+export const hideListingByAdmin = onCall(async (request) => {
+  if (request.auth?.token?.admin !== true) {
+    throw new HttpsError("permission-denied", "Apenas admin pode ocultar anúncios.");
+  }
+
+  const listingId = String(request.data?.listingId ?? "").trim();
+
+  if (!listingId) {
+    throw new HttpsError("invalid-argument", "listingId é obrigatório.");
+  }
+
+  const db = admin.firestore();
+  const listingRef = db.collection("listings").doc(listingId);
+  const listingSnap = await listingRef.get();
+
+  if (!listingSnap.exists) {
+    throw new HttpsError("not-found", "Anúncio não encontrado.");
+  }
+
+  await listingRef.update({
+    status: "hidden_by_admin",
+    updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+  });
+
+  return {
+    ok: true,
+    listingId,
+    status: "hidden_by_admin",
+  };
+});
+
+
+export const reactivateListingByAdmin = onCall(async (request) => {
+  if (request.auth?.token?.admin !== true) {
+    throw new HttpsError("permission-denied", "Apenas admin pode reativar anúncios.");
+  }
+
+  const listingId = String(request.data?.listingId ?? "").trim();
+
+  if (!listingId) {
+    throw new HttpsError("invalid-argument", "listingId é obrigatório.");
+  }
+
+  const db = admin.firestore();
+  const listingRef = db.collection("listings").doc(listingId);
+  const listingSnap = await listingRef.get();
+
+  if (!listingSnap.exists) {
+    throw new HttpsError("not-found", "Anúncio não encontrado.");
+  }
+
+  await listingRef.update({
+    status: "active",
+    updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+  });
+
+  return {
+    ok: true,
+    listingId,
+    status: "active",
+  };
+});
+
 export const renewListing = onCall(async (request) => {
   const auth = request.auth;
   if (!auth) {
@@ -410,3 +474,7 @@ export const renewListing = onCall(async (request) => {
     expiresAt: newExpiresAt,
   };
 });
+
+export { stripeWebhook } from "./stripeWebhook";
+
+export { createStripeCheckoutSession } from "./createStripeCheckoutSession";

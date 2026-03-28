@@ -1,0 +1,218 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function signedIn() {
+      return request.auth != null;
+    }
+
+    function isAdmin() {
+      return signedIn() && request.auth.token.admin == true;
+    }
+
+    function isSelf(userId) {
+      return signedIn() && request.auth.uid == userId;
+    }
+
+    match /users/{userId} {
+      allow read: if isAdmin() || isSelf(userId);
+
+      allow create: if isSelf(userId)
+        && !request.resource.data.keys().hasAny([
+          "plan",
+          "planStatus",
+          "planExpiresAt",
+          "customerId",
+          "subscriptionId"
+        ]);
+
+      allow update: if isSelf(userId)
+        && !request.resource.data.diff(resource.data).affectedKeys().hasAny([
+          "plan",
+          "planStatus",
+          "planExpiresAt",
+          "customerId",
+          "subscriptionId"
+        ]);
+
+      allow delete: if false;
+    }
+
+    match /payments/{paymentId} {
+      allow read: if isAdmin()
+        || (signedIn() && resource.data.uid == request.auth.uid);
+
+      allow create: if signedIn()
+        && request.resource.data.uid == request.auth.uid
+        && request.resource.data.status == "pending_payment"
+        && (
+          (
+            request.resource.data.plan in ["monthly", "annual"]
+          )
+          ||
+          (
+            request.resource.data.type == "featured"
+            && request.resource.data.featuredPlan in ["24h", "7d", "30d"]
+            && request.resource.data.amount in [25, 150, 300]
+            && request.resource.data.listingId is string
+            && exists(/databases/$(database)/documents/listings/$(request.resource.data.listingId))
+            && get(/databases/$(database)/documents/listings/$(request.resource.data.listingId)).data.ownerId == request.auth.uid
+          )
+        );
+
+      allow update: if false;
+      allow delete: if false;
+    }
+
+    match /listings/{listingId} {
+      allow read: if true;
+
+      allow create: if signedIn()
+        && request.resource.data.ownerId == request.auth.uid
+        && request.resource.data.plan in ["free", "monthly", "annual"]
+        && request.resource.data.status == "active";
+
+      allow update: if signedIn()
+        && resource.data.ownerId == request.auth.uid
+        && request.resource.data.ownerId == resource.data.ownerId
+        && request.resource.data.createdAt == resource.data.createdAt
+        && !request.resource.data.diff(resource.data).affectedKeys().hasAny([
+          "plan",
+          "expiresAt",
+          "renewedAt"
+        ])
+        && (
+          request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+            "title",
+            "description",
+            "price",
+            "category",
+            "location",
+            "kind",
+            "condition",
+            "serviceType",
+            "whatsapp",
+            "categoryFields",
+            "imageUrl",
+            "images",
+            "updatedAt"
+          ])
+          ||
+          (
+            request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+              "status",
+              "updatedAt"
+            ])
+            && request.resource.data.status == "sold"
+          )
+        );
+
+      allow delete: if signedIn()
+        && resource.data.ownerId == request.auth.uid;
+    }
+
+    match /conversations/{conversationId} {
+      allow get: if signedIn()
+        && (
+          !exists(/databases/$(database)/documents/conversations/$(conversationId))
+          || request.auth.uid in resource.data.participants
+        );
+
+      allow list: if signedIn()
+        && request.auth.uid in resource.data.participants;
+
+      allow create: if signedIn()
+        && request.resource.data.buyerId == request.auth.uid
+        && request.resource.data.buyerId is string
+        && request.resource.data.sellerId is string
+        && request.resource.data.buyerId != request.resource.data.sellerId
+        && request.resource.data.listingId is string
+        && request.resource.data.listingTitle is string
+        && request.resource.data.participants is list
+        && request.resource.data.participants.size() == 2
+        && request.resource.data.participants.hasAll([
+          request.resource.data.buyerId,
+          request.resource.data.sellerId
+        ])
+        && exists(/databases/$(database)/documents/listings/$(request.resource.data.listingId))
+        && get(/databases/$(database)/documents/listings/$(request.resource.data.listingId)).data.ownerId == request.resource.data.sellerId;
+
+      allow update: if signedIn()
+        && request.auth.uid in resource.data.participants
+        && request.resource.data.buyerId == resource.data.buyerId
+        && request.resource.data.sellerId == resource.data.sellerId
+        && request.resource.data.listingId == resource.data.listingId
+        && request.resource.data.participants == resource.data.participants
+        && request.resource.data.createdAt == resource.data.createdAt
+        && (
+          (
+            request.resource.data.lastMessageSenderId == request.auth.uid
+            && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+              "lastMessage",
+              "lastMessageSenderId",
+              "buyerUnreadCount",
+              "sellerUnreadCount",
+              "updatedAt",
+              "lastMessageAt"
+            ])
+          )
+          ||
+          (
+            request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+              "buyerUnreadCount",
+              "sellerUnreadCount",
+              "updatedAt"
+            ])
+          )
+        );
+
+      allow delete: if false;
+
+      match /messages/{messageId} {
+        allow read: if signedIn()
+          && request.auth.uid in get(/databases/$(database)/documents/conversations/$(conversationId)).data.participants;
+
+        allow create: if signedIn()
+          && request.auth.uid in get(/databases/$(database)/documents/conversations/$(conversationId)).data.participants
+          && request.resource.data.senderId == request.auth.uid
+          && request.resource.data.type == "text"
+          && request.resource.data.text is string
+          && request.resource.data.text.size() > 0
+          && request.resource.data.text.size() <= 1000;
+
+        allow update, delete: if false;
+      }
+    }
+
+    match /reports/{reportId} {
+      allow read: if isAdmin()
+        || (signedIn() && resource.data.reportedBy == request.auth.uid);
+
+      allow create: if signedIn()
+        && request.resource.data.reportedBy == request.auth.uid
+        && request.resource.data.listingId is string
+        && request.resource.data.listingTitle is string
+        && request.resource.data.listingOwnerId is string
+        && request.resource.data.reason in [
+          "fraud",
+          "offensive",
+          "prohibited",
+          "false_info",
+          "spam",
+          "other"
+        ]
+        && request.resource.data.details is string
+        && request.resource.data.details.size() <= 1000
+        && request.resource.data.status == "pending"
+        && request.resource.data.reportedBy != request.resource.data.listingOwnerId
+        && exists(/databases/$(database)/documents/listings/$(request.resource.data.listingId))
+        && get(/databases/$(database)/documents/listings/$(request.resource.data.listingId)).data.ownerId == request.resource.data.listingOwnerId;
+
+      allow update, delete: if false;
+    }
+
+
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}
