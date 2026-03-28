@@ -6,6 +6,57 @@ export type Category = { id: string; label: string };
 export const CATEGORIES: CategoryWithFields[] = [
   { id: "electronics", label: "Eletrónica" },
 
+  // mobile -> Telemóveis
+  {
+    id: "mobile",
+    label: "Telemóveis",
+    fields: [
+      { name: "brand", label: "Marca", type: "text", required: true, placeholder: "Ex.: Apple, Samsung, Xiaomi" },
+      { name: "model", label: "Modelo", type: "text", required: true, placeholder: "Ex.: iPhone 13, Galaxy S21" },
+      { name: "storage", label: "Armazenamento", type: "select", required: false, options: [
+        { label: "32GB", value: "32gb" },
+        { label: "64GB", value: "64gb" },
+        { label: "128GB", value: "128gb" },
+        { label: "256GB", value: "256gb" },
+        { label: "512GB", value: "512gb" },
+        { label: "1TB", value: "1tb" },
+      ]},
+      { name: "ram", label: "RAM", type: "select", required: false, options: [
+        { label: "2GB", value: "2gb" },
+        { label: "3GB", value: "3gb" },
+        { label: "4GB", value: "4gb" },
+        { label: "6GB", value: "6gb" },
+        { label: "8GB", value: "8gb" },
+        { label: "12GB", value: "12gb" },
+        { label: "16GB", value: "16gb" },
+      ]},
+      { name: "mobileCondition", label: "Estado", type: "select", required: true, options: [
+        { label: "Novo", value: "novo" },
+        { label: "Usado - Como novo", value: "como_novo" },
+        { label: "Usado - Bom", value: "bom" },
+        { label: "Usado - Regular", value: "regular" },
+      ]},
+      { name: "batteryHealth", label: "Saúde da bateria (%)", type: "number", required: false, min: 1, max: 100 },
+      { name: "color", label: "Cor", type: "text", required: false, placeholder: "Ex.: Preto, Azul" },
+      { name: "networkUnlocked", label: "Desbloqueado para todas redes", type: "select", required: false, options: [
+        { label: "Sim", value: "sim" },
+        { label: "Não", value: "nao" },
+      ]},
+      { name: "dualSim", label: "Dual SIM", type: "select", required: false, options: [
+        { label: "Sim", value: "sim" },
+        { label: "Não", value: "nao" },
+      ]},
+      { name: "hasBox", label: "Tem caixa", type: "select", required: false, options: [
+        { label: "Sim", value: "sim" },
+        { label: "Não", value: "nao" },
+      ]},
+      { name: "hasCharger", label: "Tem carregador", type: "select", required: false, options: [
+        { label: "Sim", value: "sim" },
+        { label: "Não", value: "nao" },
+      ]},
+    ],
+  },
+
   // vehicles -> Carros (Venda)
   {
     id: "vehicles",

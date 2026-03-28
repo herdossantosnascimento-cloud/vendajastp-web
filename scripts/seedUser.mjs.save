@@ -1,0 +1,36 @@
+import admin from "firebase-admin";
+import fs from "node:fs";
+
+const credPath = process.env.GOOGLE_APPLICATION_CREDENTIALS;
+if (!credPath) {
+  console.error("❌ Define GOOGLE_APPLICATION_CREDENTIALS com o caminho do JSON da service account.");
+  process.exit(1);
+}
+
+const serviceAccount = JSON.parse(fs.readFileSync(credPath, "utf8"));
+
+admin.initializeApp({
+  credential: admin.credential.cert(serviceAccount),
+});
+
+const uid = process.argv[2];
+if (!uid) {
+  console.error("Uso: node scripts/seedUser.mjs <UID> [FREE|PRO] [activeListingsCount]");
+  process.exit(1);
+}
+
+const plan = process.argv[3] ?? "FREE";
+const activeListingsCount = Number(process.argv[4] ?? 0);
+
+const db = admin.firestore();
+
+await db.collection("users").doc(uid).set(
+  {
+    plan,
+    activeListingsCount,
+    createdAt: admin.firestore.FieldValue.serverTimestamp(),
+  },
+  { merge: true }
+);
+
+console.log(`✅ users/${uid} pronto -> plan=${plan}, activeListingsCount=${activeListingsCount}`);

@@ -1,8 +1,13 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { Timestamp, addDoc, collection, doc, getDoc, serverTimestamp } from "firebase/firestore";
+import { httpsCallable } from "firebase/functions";
+import { useRouter } from "next/navigation";
 import Toast from "@/app/components/Toast";
 import { useAuth } from "@/context/AuthContext";
+import { db, functions } from "@/lib/firebase";
+import { getEffectivePlan } from "@/lib/effectivePlan";
 import { deleteListing, fetchMyListings, Listing, updateListing } from "@/lib/listings";
 
 function priceText(p?: string | number) {
@@ -13,12 +18,51 @@ function priceText(p?: string | number) {
   return n.toLocaleString("pt-PT");
 }
 
+function formatDate(value?: any) {
+  if (!value) return "-";
+
+  try {
+    if (value instanceof Timestamp) {
+      return value.toDate().toLocaleDateString("pt-PT");
+    }
+
+    if (typeof value?.toDate === "function") {
+      return value.toDate().toLocaleDateString("pt-PT");
+    }
+
+    if (value instanceof Date) {
+      return value.toLocaleDateString("pt-PT");
+    }
+
+    return "-";
+  } catch {
+    return "-";
+  }
+}
+
+function getStatusLabel(status?: string) {
+  if (status === "sold") return "Vendido";
+  if (status === "expired") return "Expirado";
+  if (status === "hidden_by_admin") return "Oculto pelo admin";
+  return "Ativo";
+}
+
+function getStatusClass(status?: string) {
+  if (status === "sold") return "bg-blue-50 text-blue-700 border-blue-200";
+  if (status === "expired") return "bg-amber-50 text-amber-700 border-amber-200";
+  if (status === "hidden_by_admin") return "bg-rose-50 text-rose-700 border-rose-200";
+  return "bg-emerald-50 text-emerald-700 border-emerald-200";
+}
+
 export default function AccountUI() {
+  const router = useRouter();
+
   const authAny = useAuth() as any;
   const user = authAny?.user ?? authAny?.currentUser ?? authAny?.firebaseUser ?? null;
 
   const [items, setItems] = useState<Listing[]>([]);
   const [loading, setLoading] = useState(true);
+  const [effectivePlan, setEffectivePlan] = useState<"free" | "monthly" | "annual">("free");
 
   const [toastOpen, setToastOpen] = useState(false);
   const [toastMsg, setToastMsg] = useState("");
@@ -27,6 +71,7 @@ export default function AccountUI() {
   const [editing, setEditing] = useState<Listing | null>(null);
   const [saving, setSaving] = useState(false);
   const [deletingId, setDeletingId] = useState<string | null>(null);
+  const [actionId, setActionId] = useState<string | null>(null);
 
   const [form, setForm] = useState({
     title: "",
@@ -40,9 +85,23 @@ export default function AccountUI() {
   async function load() {
     if (!user?.uid) return;
     setLoading(true);
+
     try {
-      const data = await fetchMyListings(user.uid);
-      setItems(data);
+      const [listingsData, userSnap] = await Promise.all([
+        fetchMyListings(user.uid),
+        getDoc(doc(db, "users", user.uid)),
+      ]);
+
+      const userData = userSnap.exists() ? (userSnap.data() as any) : {};
+
+      const nextEffectivePlan = getEffectivePlan({
+        plan: userData?.plan,
+        planStatus: userData?.planStatus,
+        planExpiresAt: userData?.planExpiresAt,
+      });
+
+      setEffectivePlan(nextEffectivePlan);
+      setItems(listingsData);
     } catch (e: any) {
       setToastType("error");
       setToastMsg(e?.message ?? "Erro ao carregar anúncios.");
@@ -65,7 +124,6 @@ export default function AccountUI() {
       return;
     }
 
-    // ✅ Se o anúncio não é do user atual, bloqueia e explica
     if (!it.ownerId || it.ownerId !== user.uid) {
       setToastType("error");
       setToastMsg(
@@ -87,8 +145,7 @@ export default function AccountUI() {
   }
 
   async function saveEdit() {
-    if (!editing) return;
-    if (!user?.uid) return;
+    if (!editing || !user?.uid) return;
 
     if (!editing.ownerId || editing.ownerId !== user.uid) {
       setToastType("error");
@@ -119,7 +176,7 @@ export default function AccountUI() {
       await load();
     } catch (e: any) {
       setToastType("error");
-      setToastMsg(e?.message ?? "Erro ao guardar (provável permissions).");
+      setToastMsg(e?.message ?? "Erro ao guardar.");
       setToastOpen(true);
     } finally {
       setSaving(false);
@@ -149,10 +206,135 @@ export default function AccountUI() {
       await load();
     } catch (e: any) {
       setToastType("error");
-      setToastMsg(e?.message ?? "Erro ao apagar (provável permissions).");
+      setToastMsg(e?.message ?? "Erro ao apagar.");
       setToastOpen(true);
     } finally {
       setDeletingId(null);
+    }
+  }
+
+  async function markAsSold(it: Listing) {
+    if (!user?.uid) return;
+
+    if (!it.ownerId || it.ownerId !== user.uid) {
+      setToastType("error");
+      setToastMsg(
+        `Bloqueado: não és o dono deste anúncio.\nownerId: "${it.ownerId ?? ""}"\nuid: "${user.uid}"`
+      );
+      setToastOpen(true);
+      return;
+    }
+
+    try {
+      setActionId(it.id);
+
+      await updateListing(it.id, {
+        status: "sold",
+      });
+
+      setToastType("success");
+      setToastMsg("Anúncio marcado como vendido ✅");
+      setToastOpen(true);
+
+      await load();
+    } catch (e: any) {
+      setToastType("error");
+      setToastMsg(e?.message ?? "Erro ao marcar anúncio como vendido.");
+      setToastOpen(true);
+    } finally {
+      setActionId(null);
+    }
+  }
+
+  async function renewListing(it: Listing) {
+    if (!user?.uid) return;
+
+    if (!it.ownerId || it.ownerId !== user.uid) {
+      setToastType("error");
+      setToastMsg(
+        `Bloqueado: não és o dono deste anúncio.\nownerId: "${it.ownerId ?? ""}"\nuid: "${user.uid}"`
+      );
+      setToastOpen(true);
+      return;
+    }
+
+    if (effectivePlan === "free") {
+      setToastType("info");
+      setToastMsg("Para renovar este anúncio precisas primeiro de ativar um plano.");
+      setToastOpen(true);
+      router.push("/pricing?reason=renew");
+      return;
+    }
+
+    try {
+      setActionId(it.id);
+
+      const fn = httpsCallable(functions, "renewListing");
+      await fn({ listingId: it.id });
+
+      setToastType("success");
+      setToastMsg("Anúncio renovado com segurança ✅");
+      setToastOpen(true);
+
+      await load();
+    } catch (e: any) {
+      const message = e?.message ?? "Erro ao renovar anúncio.";
+      setToastType("error");
+      setToastMsg(message);
+      setToastOpen(true);
+    } finally {
+      setActionId(null);
+    }
+  }
+
+  async function requestFeaturedPayment(it: Listing, featuredPlan: "24h" | "7d" | "30d") {
+    if (!user?.uid) return;
+
+    if (!it.ownerId || it.ownerId !== user.uid) {
+      setToastType("error");
+      setToastMsg(
+        `Bloqueado: não és o dono deste anúncio.\nownerId: "${it.ownerId ?? ""}"\nuid: "${user.uid}"`
+      );
+      setToastOpen(true);
+      return;
+    }
+
+    const prices = {
+      "24h": 25,
+      "7d": 150,
+      "30d": 300,
+    } as const;
+
+    try {
+      setActionId(it.id);
+
+      const featuredRef = `FT-${String(user.uid).slice(0, 6).toUpperCase()}-${featuredPlan.toUpperCase()}-${String(Date.now()).slice(-6)}`;
+
+      const paymentRef = await addDoc(collection(db, "payments"), {
+        uid: user.uid,
+        type: "featured",
+        listingId: it.id,
+        featuredPlan,
+        amount: prices[featuredPlan],
+        status: "pending_payment",
+        paymentRef: featuredRef,
+        proofPath: "",
+        createdAt: serverTimestamp(),
+        updatedAt: serverTimestamp(),
+      });
+
+      setToastType("success");
+      setToastMsg("Pedido de destaque criado ✅ Agora envia o pagamento e comprovativo.");
+      setToastOpen(true);
+
+      const qs = `type=featured&featuredPlan=${encodeURIComponent(featuredPlan)}&amount=${encodeURIComponent(String(prices[featuredPlan]))}&ref=${encodeURIComponent(featuredRef)}&paymentId=${encodeURIComponent(paymentRef.id)}`;
+      router.push(`/payment/bank?${qs}`);
+    } catch (e: any) {
+      setToastType("error");
+      setToastMsg(e?.message ?? "Erro ao criar pedido de destaque.");
+      setToastOpen(true);
+    } finally {
+      setActionId(null);
     }
   }
 
@@ -174,9 +356,9 @@ export default function AccountUI() {
       <main className="mx-auto w-full max-w-5xl px-4 py-6">
         <h1 className="text-2xl font-extrabold">Minha conta</h1>
 
-        {/* ✅ DEBUG PROFISSIONAL: mostra uid para confirmar */}
         <div className="mt-2 rounded-2xl border bg-white p-4 text-xs text-gray-700">
           <div><b>UID atual:</b> {user.uid}</div>
+          <div><b>Plano efetivo:</b> {effectivePlan.toUpperCase()}</div>
           <div className="text-gray-500">Se isto estiver vazio, não estás logado com Firebase Auth.</div>
         </div>
 
@@ -190,12 +372,14 @@ export default function AccountUI() {
           <div className="mt-6 grid grid-cols-1 gap-4 md:grid-cols-2">
             {items.map((it) => {
               const isOwner = it.ownerId && it.ownerId === user.uid;
+              const isBusy = deletingId === it.id || actionId === it.id;
+              const renewLabel =
+                effectivePlan === "free" ? "Ativar plano para renovar" : "Renovar anúncio";
 
               return (
                 <div key={it.id} className="overflow-hidden rounded-2xl border bg-white shadow-sm">
                   <div className="h-44 w-full overflow-hidden bg-gray-100 md:h-52">
                     {it.imageUrl ? (
-                      // eslint-disable-next-line @next/next/no-img-element
                       <img src={it.imageUrl} alt={it.title} className="h-full w-full object-cover" loading="lazy" />
                     ) : (
                       <div className="flex h-full w-full items-center justify-center text-sm text-gray-500">Sem foto</div>
@@ -203,22 +387,31 @@ export default function AccountUI() {
                   </div>
 
                   <div className="p-4">
-                    <div className="text-sm font-extrabold">{it.title}</div>
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="text-sm font-extrabold">{it.title}</div>
+                      <div className={`rounded-full border px-3 py-1 text-[11px] font-bold ${getStatusClass(it.status)}`}>
+                        {getStatusLabel(it.status)}
+                      </div>
+                    </div>
+
                     <div className="mt-1 text-sm font-bold text-emerald-700">
                       {priceText(it.price)} {String(it.price ?? "").trim() ? "STN" : ""}
                     </div>
+
                     <div className="mt-1 text-xs text-gray-600">{it.category} • {it.location}</div>
 
-                    {/* ✅ Mostra ownerId do anúncio (para encontrar o problema) */}
                     <div className="mt-2 rounded-xl border bg-gray-50 p-2 text-[11px] text-gray-700">
                       <div><b>ownerId:</b> {it.ownerId || "(vazio)"}</div>
                       <div><b>É teu?</b> {isOwner ? "Sim ✅" : "Não ❌"}</div>
+                      <div><b>Status:</b> {it.status || "active"}</div>
+                      <div><b>Expira em:</b> {formatDate(it.expiresAt)}</div>
                     </div>
 
-                    <div className="mt-3 flex gap-2">
+                    <div className="mt-3 grid grid-cols-2 gap-2">
                       <button
                         onClick={() => openEdit(it)}
-                        className="flex-1 rounded-xl border px-4 py-2 text-sm font-bold hover:bg-gray-50"
+                        disabled={isBusy}
+                        className="rounded-xl border px-4 py-2 text-sm font-bold hover:bg-gray-50 disabled:opacity-60"
                       >
                         Editar
                       </button>
@@ -227,11 +420,86 @@ export default function AccountUI() {
                         onClick={() => {
                           if (confirm("Tens a certeza que queres apagar este anúncio?")) doDelete(it);
                         }}
-                        disabled={deletingId === it.id}
-                        className="flex-1 rounded-xl bg-red-600 px-4 py-2 text-sm font-extrabold text-white hover:opacity-95 disabled:opacity-60"
+                        disabled={deletingId === it.id || actionId === it.id}
+                        className="rounded-xl bg-red-600 px-4 py-2 text-sm font-extrabold text-white hover:opacity-95 disabled:opacity-60"
                       >
                         {deletingId === it.id ? "A apagar…" : "Apagar"}
                       </button>
+
+                      <button
+                        onClick={() => {
+                          if (confirm("Queres marcar este anúncio como vendido?")) markAsSold(it);
+                        }}
+                        disabled={isBusy || it.status === "sold"}
+                        className="rounded-xl bg-blue-600 px-4 py-2 text-sm font-extrabold text-white hover:opacity-95 disabled:opacity-60"
+                      >
+                        {actionId === it.id && it.status !== "sold" ? "A atualizar…" : "Marcar como vendido"}
+                      </button>
+
+                      <button
+                        onClick={() => {
+                          if (
+                            confirm(
+                              effectivePlan === "free"
+                                ? "Para renovar, precisas primeiro de ativar um plano. Continuar?"
+                                : "Queres renovar este anúncio?"
+                            )
+                          ) {
+                            renewListing(it);
+                          }
+                        }}
+                        disabled={isBusy}
+                        className="rounded-xl bg-emerald-600 px-4 py-2 text-sm font-extrabold text-white hover:opacity-95 disabled:opacity-60"
+                      >
+                        {actionId === it.id ? "A processar…" : renewLabel}
+                      </button>
+                    </div>
+
+                    <div className="mt-3 rounded-2xl border border-amber-200 bg-amber-50 p-3">
+                      <div className="text-xs font-extrabold uppercase tracking-wide text-amber-800">
+                        Destacar no topo
+                      </div>
+                      <div className="mt-1 text-[11px] text-amber-700">
+                        Coloca este anúncio no topo da página por tempo limitado.
+                      </div>
+
+                      <div className="mt-3 grid grid-cols-1 gap-2 sm:grid-cols-3">
+                        <button
+                          onClick={() => {
+                            if (confirm("Criar pedido para destacar este anúncio no topo por 24 horas (25 STN)?")) {
+                              requestFeaturedPayment(it, "24h");
+                            }
+                          }}
+                          disabled={isBusy}
+                          className="rounded-xl bg-amber-500 px-4 py-2 text-sm font-extrabold text-white hover:opacity-95 disabled:opacity-60"
+                        >
+                          {actionId === it.id ? "A processar…" : "Topo 24h • 25 STN"}
+                        </button>
+
+                        <button
+                          onClick={() => {
+                            if (confirm("Criar pedido para destacar este anúncio no topo por 7 dias (150 STN)?")) {
+                              requestFeaturedPayment(it, "7d");
+                            }
+                          }}
+                          disabled={isBusy}
+                          className="rounded-xl bg-amber-600 px-4 py-2 text-sm font-extrabold text-white hover:opacity-95 disabled:opacity-60"
+                        >
+                          {actionId === it.id ? "A processar…" : "Topo 7d • 150 STN"}
+                        </button>
+
+                        <button
+                          onClick={() => {
+                            if (confirm("Criar pedido para destacar este anúncio no topo por 30 dias (300 STN)?")) {
+                              requestFeaturedPayment(it, "30d");
+                            }
+                          }}
+                          disabled={isBusy}
+                          className="rounded-xl bg-yellow-600 px-4 py-2 text-sm font-extrabold text-white hover:opacity-95 disabled:opacity-60"
+                        >
+                          {actionId === it.id ? "A processar…" : "Topo 30d • 300 STN"}
+                        </button>
+                      </div>
                     </div>
                   </div>
                 </div>
@@ -240,7 +508,6 @@ export default function AccountUI() {
           </div>
         )}
 
-        {/* MODAL EDITAR */}
         {editing && (
           <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
             <div className="w-full max-w-2xl rounded-2xl bg-white p-5 shadow-lg">

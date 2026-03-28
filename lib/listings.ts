@@ -7,6 +7,7 @@ import {
   getDoc,
   getDocs,
   limit as qLimit,
+  orderBy,
   query,
   serverTimestamp,
   updateDoc,
@@ -16,7 +17,7 @@ import { getDownloadURL, ref, uploadBytes } from "firebase/storage";
 import { db, storage } from "./firebase";
 import { getPlanActiveLimit, getPlanDurationDays, type UserPlan } from "./planRules";
 import { AppError } from "./errors";
-import { markExpiredListingsIfNeeded } from "./listings/markExpiredListings";
+import { getEffectivePlan } from "./effectivePlan";
 
 export type Listing = {
   id: string;
@@ -38,6 +39,18 @@ export type Listing = {
   whatsapp?: string;
 
   categoryFields?: Record<string, any>;
+
+  views?: number;
+  whatsappClicks?: number;
+  contactClicks?: number;
+
+  plan?: UserPlan;
+  status?: "active" | "expired" | "sold" | "hidden_by_admin";
+  expiresAt?: any;
+  featured?: boolean;
+  featuredPlan?: "24h" | "7d" | "30d";
+  featuredUntil?: any;
+  featuredApprovedAt?: any;
 
   ownerId: string;
   createdAt?: any;
@@ -78,30 +91,119 @@ export function normalizeWhatsApp(v: unknown) {
 }
 
 function sortByCreatedAtDesc(items: Listing[]) {
+  const now = Date.now();
+
+  function isFeaturedActive(item: any) {
+    if (!item?.featured) return false;
+
+    const featuredUntil = item?.featuredUntil;
+
+    const expDate: Date | null =
+      featuredUntil instanceof Timestamp
+        ? featuredUntil.toDate()
+        : typeof featuredUntil?.toDate === "function"
+          ? featuredUntil.toDate()
+          : featuredUntil instanceof Date
+            ? featuredUntil
+            : null;
+
+    if (!expDate) return !!item?.featured;
+    return expDate.getTime() > now;
+  }
+
   items.sort((a: any, b: any) => {
+    const af = isFeaturedActive(a) ? 1 : 0;
+    const bf = isFeaturedActive(b) ? 1 : 0;
+
+    if (bf !== af) return bf - af;
+
     const as = a?.createdAt?.seconds ?? 0;
     const bs = b?.createdAt?.seconds ?? 0;
     return bs - as;
   });
+
   return items;
+}
+
+function isPublicVisibleListing(data: any, now: Date): boolean {
+  if (data?.status === "expired") return false;
+  if (data?.status === "sold") return false;
+  if (data?.status === "hidden_by_admin") return false;
+  if (data?.status && data?.status !== "active") return false;
+
+  const expiresAt = data?.expiresAt;
+  if (!expiresAt) return true;
+
+  const expDate: Date | null =
+    expiresAt instanceof Timestamp
+      ? expiresAt.toDate()
+      : typeof expiresAt?.toDate === "function"
+        ? expiresAt.toDate()
+        : expiresAt instanceof Date
+          ? expiresAt
+          : null;
+
+  if (!expDate) return true;
+  return expDate.getTime() > now.getTime();
 }
 
 export async function fetchListings(opts?: { limit?: number; category?: string }): Promise<Listing[]> {
   const take = opts?.limit ?? 50;
   const cat = String(opts?.category ?? "").trim();
+  const now = new Date();
 
-  const q = cat
-    ? query(collection(db, "listings"), where("category", "==", cat), qLimit(take))
-    : query(collection(db, "listings"), qLimit(take));
+  if (cat) {
+    const q = query(
+      collection(db, "listings"),
+      where("category", "==", cat),
+      qLimit(Math.max(take * 4, 50))
+    );
 
-  const snap = await getDocs(q);
+    const snap = await getDocs(q);
 
-  const items = snap.docs.map((d) => ({
-    id: d.id,
-    ...(d.data() as Omit<Listing, "id">),
-  })) as Listing[];
+    const items = snap.docs.map((d) => ({
+      id: d.id,
+      ...(d.data() as Omit<Listing, "id">),
+    })) as Listing[];
 
-  return sortByCreatedAtDesc(items);
+    const visibleItems = items.filter((item) => isPublicVisibleListing(item, now));
+
+    return sortByCreatedAtDesc(visibleItems).slice(0, take);
+  }
+
+  const featuredQ = query(
+    collection(db, "listings"),
+    where("featured", "==", true),
+    qLimit(Math.max(take * 2, 20))
+  );
+
+  const recentQ = query(
+    collection(db, "listings"),
+    orderBy("createdAt", "desc"),
+    qLimit(Math.max(take * 4, 50))
+  );
+
+  const [featuredSnap, recentSnap] = await Promise.all([
+    getDocs(featuredQ),
+    getDocs(recentQ),
+  ]);
+
+  const merged = new Map<string, Listing>();
+
+  for (const d of [...featuredSnap.docs, ...recentSnap.docs]) {
+    if (!merged.has(d.id)) {
+      merged.set(d.id, {
+        id: d.id,
+        ...(d.data() as Omit<Listing, "id">),
+      });
+    }
+  }
+
+  const visibleItems = Array.from(merged.values()).filter((item) =>
+    isPublicVisibleListing(item, now)
+  );
+
+  return sortByCreatedAtDesc(visibleItems).slice(0, take);
 }
 
 export async function fetchListingById(id: string): Promise<Listing | null> {
@@ -121,13 +223,15 @@ export async function fetchMyListings(uid: string, opts?: { limit?: number }): P
     ...(d.data() as Omit<Listing, "id">),
   })) as Listing[];
 
-  await markExpiredListingsIfNeeded(items).catch(() => 0);
 
   return sortByCreatedAtDesc(items);
 }
 
 function isActiveAndNotExpired(data: any, now: Date): boolean {
   if (data?.status === "expired") return false;
+  if (data?.status === "sold") return false;
+  if (data?.status === "hidden_by_admin") return false;
+  if (data?.status && data?.status !== "active") return false;
 
   const expiresAt = data?.expiresAt;
   if (!expiresAt) return true;
@@ -152,7 +256,6 @@ async function countActiveListingsForOwner(uid: string): Promise<number> {
   const snap = await getDocs(q);
 
   const items = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
-  await markExpiredListingsIfNeeded(items).catch(() => 0);
 
   let count = 0;
   for (const d of snap.docs) {
@@ -164,7 +267,17 @@ async function countActiveListingsForOwner(uid: string): Promise<number> {
 }
 
 export async function createListingWithPlanLimits(input: CreateListingInput) {
-  const plan = normalizePlan(input.plan);
+  const requestedPlan = normalizePlan(input.plan);
+
+  const userSnap = await getDoc(doc(db, "users", input.uid));
+  const userData = userSnap.exists() ? (userSnap.data() as any) : {};
+
+  const plan = getEffectivePlan({
+    plan: userData?.plan ?? requestedPlan,
+    planStatus: userData?.planStatus,
+    planExpiresAt: userData?.planExpiresAt,
+  });
+
   const maxPhotos = plan === "free" ? 3 : 7;
 
   if (!input.uid) throw new AppError("UNAUTHENTICATED", "Precisas estar logado.");

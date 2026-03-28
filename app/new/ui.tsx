@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import Toast from "@/app/components/Toast";
 import { setNextToast } from "@/lib/toast-flag";
 import { createListingWithPlanLimits } from "@/lib/listings";
+import { getEffectivePlan, getPlanLabel } from "@/lib/effectivePlan";
 import { isFreeLimitError } from "@/lib/handlePlanError";
 import { CATEGORIES, getCategoryFields } from "@/lib/categories";
 import { useAuth } from "@/context/AuthContext";
@@ -28,8 +29,13 @@ export default function NewListingUI() {
   const user = authAny?.user ?? authAny?.currentUser ?? authAny?.firebaseUser ?? null;
   const userDoc = authAny?.userData ?? authAny?.userDoc ?? authAny?.dbUser ?? authAny?.profile ?? null;
 
-  const plan: "free" | "pro" = userDoc?.plan === "pro" ? "pro" : "free";
-  const maxPhotos = plan === "pro" ? 7 : 3;
+  const plan = getEffectivePlan({
+    plan: userDoc?.plan,
+    planStatus: userDoc?.planStatus,
+    planExpiresAt: userDoc?.planExpiresAt,
+  });
+
+  const maxPhotos = plan === "free" ? 3 : 7;
 
   // Toast
   const [toastOpen, setToastOpen] = useState(false);
@@ -209,7 +215,7 @@ export default function NewListingUI() {
 
           <div className="mt-3 flex flex-wrap items-center gap-2 text-sm text-gray-600">
             <span className="rounded-full border bg-white px-3 py-1">
-              Plano: <b className="text-gray-900">{plan === "pro" ? "Pro" : "Free"}</b>
+              Plano: <b className="text-gray-900">{getPlanLabel(plan)}</b>
             </span>
             <span className="rounded-full border bg-white px-3 py-1">
               Fotos: <b className="text-gray-900">máx. {maxPhotos}</b>

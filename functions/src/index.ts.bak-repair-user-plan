@@ -1,0 +1,171 @@
+import { onCall, HttpsError } from "firebase-functions/v2/https";
+import * as admin from "firebase-admin";
+
+admin.initializeApp();
+
+export const approvePayment = onCall(async (request) => {
+  const auth = request.auth;
+  if (!auth) {
+    throw new HttpsError("unauthenticated", "Login required.");
+  }
+
+  const isAdmin = (auth.token as any)?.admin === true;
+  if (!isAdmin) {
+    throw new HttpsError("permission-denied", "Admin only.");
+  }
+
+  const paymentId = (request.data as any)?.paymentId as string;
+  if (!paymentId) {
+    throw new HttpsError("invalid-argument", "paymentId required.");
+  }
+
+  const db = admin.firestore();
+  const payRef = db.collection("payments").doc(paymentId);
+  const paySnap = await payRef.get();
+
+  if (!paySnap.exists) {
+    throw new HttpsError("not-found", "Payment not found.");
+  }
+
+  const pay = paySnap.data() as any;
+
+  if (pay.status === "approved") {
+    return { ok: true, alreadyApproved: true };
+  }
+
+  const uid = pay.uid as string;
+  const plan = pay.plan as "monthly" | "annual";
+
+  if (!uid || (plan !== "monthly" && plan !== "annual")) {
+    throw new HttpsError("failed-precondition", "Invalid payment data.");
+  }
+
+  if (!pay.proofPath) {
+    throw new HttpsError("failed-precondition", "Payment proof is required before approval.");
+  }
+
+  const now = admin.firestore.Timestamp.now();
+  const days = plan === "annual" ? 365 : 30;
+  const expiresAt = admin.firestore.Timestamp.fromMillis(
+    now.toMillis() + days * 24 * 60 * 60 * 1000
+  );
+
+  await db.runTransaction(async (tx) => {
+    tx.update(payRef, {
+      status: "approved",
+      approvedAt: admin.firestore.FieldValue.serverTimestamp(),
+      updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+    });
+
+    tx.set(
+      db.collection("users").doc(uid),
+      {
+        plan,
+        planStatus: "active",
+        planExpiresAt: expiresAt,
+        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+      },
+      { merge: true }
+    );
+  });
+
+  return { ok: true };
+});
+
+export const attachPaymentProof = onCall(async (request) => {
+  const auth = request.auth;
+  if (!auth) {
+    throw new HttpsError("unauthenticated", "Login required.");
+  }
+
+  const uid = auth.uid;
+
+  const paymentId = (request.data as any)?.paymentId as string;
+  const proofPath = (request.data as any)?.proofPath as string;
+
+  if (!paymentId) {
+    throw new HttpsError("invalid-argument", "paymentId required.");
+  }
+
+  if (!proofPath) {
+    throw new HttpsError("invalid-argument", "proofPath required.");
+  }
+
+  const prefix = `payment_proofs/${uid}/${paymentId}/`;
+  if (!proofPath.startsWith(prefix) || proofPath.includes("..")) {
+    throw new HttpsError("invalid-argument", "Invalid proofPath.");
+  }
+
+  const db = admin.firestore();
+  const payRef = db.collection("payments").doc(paymentId);
+  const snap = await payRef.get();
+
+  if (!snap.exists) {
+    throw new HttpsError("not-found", "Payment not found.");
+  }
+
+  const pay = snap.data() as any;
+
+  if (pay.uid !== uid) {
+    throw new HttpsError("permission-denied", "Not allowed.");
+  }
+
+  if (pay.status === "approved") {
+    throw new HttpsError("failed-precondition", "Payment already approved.");
+  }
+
+  await payRef.update({
+    proofPath,
+    proofUploadedAt: admin.firestore.FieldValue.serverTimestamp(),
+    updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+  });
+
+  return { ok: true };
+});
+
+export const rejectPayment = onCall(async (request) => {
+  const auth = request.auth;
+  if (!auth) {
+    throw new HttpsError("unauthenticated", "Login required.");
+  }
+
+  const isAdmin = (auth.token as any)?.admin === true;
+  if (!isAdmin) {
+    throw new HttpsError("permission-denied", "Admin only.");
+  }
+
+  const paymentId = (request.data as any)?.paymentId as string;
+  if (!paymentId) {
+    throw new HttpsError("invalid-argument", "paymentId required.");
+  }
+
+  const db = admin.firestore();
+  const payRef = db.collection("payments").doc(paymentId);
+  const paySnap = await payRef.get();
+
+  if (!paySnap.exists) {
+    throw new HttpsError("not-found", "Payment not found.");
+  }
+
+  const pay = paySnap.data() as any;
+
+  if (pay.status === "approved") {
+    throw new HttpsError("failed-precondition", "Payment already approved.");
+  }
+
+  if (pay.status === "rejected") {
+    return { ok: true, alreadyRejected: true };
+  }
+
+  await payRef.set(
+    {
+      status: "rejected",
+      rejectedAt: admin.firestore.FieldValue.serverTimestamp(),
+      updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+    },
+    { merge: true }
+  );
+
+  return { ok: true };
+});
+

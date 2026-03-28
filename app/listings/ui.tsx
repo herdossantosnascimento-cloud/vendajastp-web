@@ -5,7 +5,6 @@ import { useEffect, useMemo, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import { fetchListings, Listing } from "@/lib/listings";
 import { CATEGORIES } from "@/lib/categories";
-import { fetchListingsPage, type ListingsPageCursor } from "@/lib/listingsPagination";
 
 function priceText(p?: string | number) {
   const s = String(p ?? "").trim();
@@ -21,17 +20,60 @@ function categoryLabel(id?: string) {
   return CATEGORIES.find((c) => c.id === s)?.label ?? s;
 }
 
+
+function formatFeaturedUntil(value?: any) {
+  if (!value) return "";
+
+  try {
+    if (typeof value?.toDate === "function") {
+      return value.toDate().toLocaleDateString("pt-PT");
+    }
+
+    if (value instanceof Date) {
+      return value.toLocaleDateString("pt-PT");
+    }
+
+    return "";
+  } catch {
+    return "";
+  }
+}
+
+function isFeaturedActive(item: any) {
+  if (!item?.featured) return false;
+
+  const featuredUntil = item?.featuredUntil;
+  if (!featuredUntil) return !!item?.featured;
+
+  try {
+    const date =
+      typeof featuredUntil?.toDate === "function"
+        ? featuredUntil.toDate()
+        : featuredUntil instanceof Date
+          ? featuredUntil
+          : null;
+
+    if (!date) return !!item?.featured;
+    return date.getTime() > Date.now();
+  } catch {
+    return !!item?.featured;
+  }
+}
+
 function ListingCard({ item }: { item: Listing }) {
   const img = item.imageUrl || item.images?.[0] || "";
+  const featuredActive = isFeaturedActive(item);
+  const featuredUntilText = formatFeaturedUntil(item.featuredUntil);
 
   return (
     <Link
       href={`/listings/${item.id}`}
-      className="group overflow-hidden rounded-2xl border border-gray-200 bg-white shadow-sm transition hover:shadow-md"
+      className={`group overflow-hidden rounded-2xl border bg-white shadow-sm transition hover:shadow-md ${
+        featuredActive ? "border-amber-300 ring-1 ring-amber-200" : "border-gray-200"
+      }`}
     >
       <div className="h-44 w-full overflow-hidden bg-gray-100 md:h-52">
         {img ? (
-          // eslint-disable-next-line @next/next/no-img-element
           <img src={img} alt={item.title} className="h-full w-full object-cover" loading="lazy" />
         ) : (
           <div className="flex h-full w-full items-center justify-center text-sm text-gray-500">
@@ -41,6 +83,12 @@ function ListingCard({ item }: { item: Listing }) {
       </div>
 
       <div className="p-4">
+        {featuredActive ? (
+          <div className="mb-2 inline-flex items-center rounded-full border border-amber-300 bg-amber-50 px-2.5 py-1 text-[11px] font-extrabold uppercase tracking-wide text-amber-800">
+            ⭐ Destacado{featuredUntilText ? ` até ${featuredUntilText}` : ""}
+          </div>
+        ) : null}
+
         <div className="line-clamp-1 text-sm font-extrabold text-gray-900">{item.title}</div>
 
         <div className="mt-1 flex items-end justify-between gap-3">
@@ -63,42 +111,20 @@ export default function ListingsUI() {
   const [items, setItems] = useState<Listing[]>([]);
   const [loading, setLoading] = useState(true);
 
-  // paginação
-  const [cursor, setCursor] = useState<ListingsPageCursor>(null);
-  const [hasMore, setHasMore] = useState(false);
-  const [loadingMore, setLoadingMore] = useState(false);
-
   const title = useMemo(() => {
     if (!cat) return "Anúncios";
     return `Anúncios — ${categoryLabel(cat)}`;
   }, [cat]);
 
-  // Carregar primeira página quando muda categoria
   useEffect(() => {
     let alive = true;
 
     (async () => {
       try {
         setLoading(true);
-        setItems([]);
-        setCursor(null);
-        setHasMore(false);
-
-        // Performance: carrega só a primeira página (12)
-        // Se Firestore exigir index (orderBy+where), fazemos fallback para o fetch antigo.
-        try {
-          const res = await fetchListingsPage({ pageSize: 12, category: cat || undefined, cursor: null });
-          if (!alive) return;
-          setItems(res.items);
-          setCursor(res.nextCursor);
-          setHasMore(Boolean(res.nextCursor));
-        } catch {
-          const data = await fetchListings({ limit: 60, category: cat || undefined });
-          if (!alive) return;
-          setItems(data);
-          setCursor(null);
-          setHasMore(false);
-        }
+        const data = await fetchListings({ limit: 100, category: cat || undefined });
+        if (!alive) return;
+        setItems(data);
       } finally {
         if (alive) setLoading(false);
       }
@@ -108,20 +134,6 @@ export default function ListingsUI() {
       alive = false;
     };
   }, [cat]);
-
-  async function onLoadMore() {
-    if (loadingMore || !hasMore || !cursor) return;
-
-    setLoadingMore(true);
-    try {
-      const res = await fetchListingsPage({ pageSize: 12, category: cat || undefined, cursor });
-      setItems((prev) => [...prev, ...res.items]);
-      setCursor(res.nextCursor);
-      setHasMore(Boolean(res.nextCursor));
-    } finally {
-      setLoadingMore(false);
-    }
-  }
 
   if (loading) {
     return <div className="mx-auto max-w-6xl px-4 py-8 text-sm text-gray-600">A carregar…</div>;
@@ -163,27 +175,11 @@ export default function ListingsUI() {
           </div>
         </div>
       ) : (
-        <>
-          <div className="grid grid-cols-2 gap-4 md:grid-cols-3 lg:grid-cols-4">
-            {items.map((it) => (
-              <ListingCard key={it.id} item={it} />
-            ))}
-          </div>
-
-          {/* Paginação: botão simples no fim (sem mexer no layout existente, só acrescenta) */}
-          {hasMore ? (
-            <div className="mt-6 flex justify-center">
-              <button
-                type="button"
-                onClick={onLoadMore}
-                disabled={loadingMore}
-                className="rounded-xl border border-gray-200 bg-white px-4 py-2 text-sm font-semibold hover:bg-gray-50 disabled:opacity-60"
-              >
-                {loadingMore ? "A carregar…" : "Ver mais"}
-              </button>
-            </div>
-          ) : null}
-        </>
+        <div className="grid grid-cols-2 gap-4 md:grid-cols-3 lg:grid-cols-4">
+          {items.map((it) => (
+            <ListingCard key={it.id} item={it} />
+          ))}
+        </div>
       )}
     </div>
   );

@@ -1,0 +1,126 @@
+"use client";
+
+import { Suspense, useEffect, useMemo, useState } from "react";
+import Link from "next/link";
+import { useRouter, useSearchParams } from "next/navigation";
+import { httpsCallable } from "firebase/functions";
+import { useAuth } from "@/context/AuthContext";
+import { functions } from "@/lib/firebase";
+
+function StripePaymentContent() {
+  const router = useRouter();
+  const sp = useSearchParams();
+  const { user, loading } = useAuth();
+  const [starting, setStarting] = useState(false);
+  const [error, setError] = useState("");
+
+  const plan = useMemo(() => (sp.get("plan") === "annual" ? "annual" : "monthly"), [sp]);
+  const cancelled = useMemo(() => sp.get("cancelled") === "1", [sp]);
+
+  useEffect(() => {
+    if (loading) return;
+    if (!user?.uid) {
+      router.replace("/login?next=/pricing");
+      return;
+    }
+  }, [user, loading, router]);
+
+  async function startCheckout() {
+    if (!user?.uid || starting) return;
+
+    setStarting(true);
+    setError("");
+
+    try {
+      const fn = httpsCallable(functions, "createStripeCheckoutSession");
+      const result = await fn({
+        plan,
+        origin: window.location.origin,
+      });
+
+      const data = result.data as { url?: string };
+      const url = String(data?.url || "").trim();
+
+      if (!url) {
+        throw new Error("Checkout URL missing.");
+      }
+
+      window.location.href = url;
+    } catch (err: any) {
+      console.error(err);
+      setError("Não foi possível iniciar o pagamento Stripe.");
+      setStarting(false);
+    }
+  }
+
+  if (loading || !user?.uid) {
+    return (
+      <div className="mx-auto max-w-3xl px-6 py-14">
+        <div className="rounded-2xl border bg-white p-6 text-sm text-gray-600">
+          A validar acesso...
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="mx-auto max-w-3xl px-6 py-14">
+      <Link className="text-sm text-gray-500 hover:text-gray-700" href={`/payment/select?plan=${plan}`}>
+        ← Voltar ao método
+      </Link>
+
+      <h1 className="mt-4 text-3xl font-extrabold tracking-tight">Pagar com Stripe</h1>
+      <p className="mt-2 text-gray-600">
+        Vais pagar o plano <b>{plan === "annual" ? "Anual" : "Mensal"}</b> com Stripe Checkout.
+      </p>
+
+      {cancelled && (
+        <div className="mt-6 rounded-2xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">
+          O pagamento foi cancelado. Podes tentar novamente.
+        </div>
+      )}
+
+      {error && (
+        <div className="mt-6 rounded-2xl border border-red-200 bg-red-50 p-4 text-sm text-red-700">
+          {error}
+        </div>
+      )}
+
+      <div className="mt-8 rounded-3xl border bg-white p-7 shadow-sm">
+        <div className="text-sm text-gray-500">Plano</div>
+        <div className="mt-1 text-2xl font-extrabold text-gray-900">
+          {plan === "annual" ? "Anual" : "Mensal"}
+        </div>
+
+        <div className="mt-4 text-sm text-gray-600">
+          {plan === "annual" ? "15 EUR" : "5 EUR"}
+        </div>
+
+        <button
+          type="button"
+          onClick={startCheckout}
+          disabled={starting}
+          className="mt-6 inline-flex rounded-xl bg-indigo-700 px-4 py-3 text-sm font-medium text-white disabled:cursor-not-allowed disabled:opacity-60"
+        >
+          {starting ? "A redirecionar..." : "Continuar para Stripe"}
+        </button>
+      </div>
+    </div>
+  );
+}
+
+export default function StripePaymentPage() {
+  return (
+    <Suspense
+      fallback={
+        <div className="mx-auto max-w-3xl px-6 py-14">
+          <div className="rounded-2xl border bg-white p-6 text-sm text-gray-600">
+            A carregar Stripe...
+          </div>
+        </div>
+      }
+    >
+      <StripePaymentContent />
+    </Suspense>
+  );
+}

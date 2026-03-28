@@ -1,36 +1,55 @@
 "use client";
 
-import { useRouter, useSearchParams } from "next/navigation";
-import { markPaymentSent } from "@/lib/payments";
-import { useAuth } from "@/context/AuthContext";
-import { setNextToast } from "@/lib/toast-flag";
+import { Suspense, useMemo, useState } from "react";
 import Link from "next/link";
-import { useMemo, useState } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
+import { useAuth } from "@/context/AuthContext";
+import { requestPlanPayment } from "@/lib/payments";
+import { uploadPaymentProof } from "@/lib/paymentProof";
+import { setNextToast } from "@/lib/toast-flag";
 
-export default function BankPaymentPage() {
+function BankPaymentContent() {
   const router = useRouter();
   const sp = useSearchParams();
   const { user } = useAuth();
 
   const plan = useMemo(() => (sp.get("plan") === "annual" ? "annual" : "monthly"), [sp]);
-  const ref = sp.get("ref") || "";
-
   const [loading, setLoading] = useState(false);
-  const amountDb = plan === "annual" ? 1500 : 200;
+  const [proofFile, setProofFile] = useState<File | null>(null);
 
-  async function onPaid() {
+  const amountSTN = plan === "annual" ? 1500 : 200;
+
+  async function onConfirm() {
     if (!user?.uid) {
       setNextToast("Faz login primeiro.", "error");
       router.push("/pricing");
       return;
     }
+
+    if (!proofFile) {
+      setNextToast("Seleciona o comprovativo antes de continuar.", "error");
+      return;
+    }
+
     try {
       setLoading(true);
-      await markPaymentSent({ uid: user.uid });
-      setNextToast("Pedido enviado. Vamos confirmar o pagamento e ativar o PRO ✅", "success");
-      router.push("/new");
+
+      const { paymentId } = await requestPlanPayment({
+        uid: user.uid,
+        plan,
+        method: "bank_transfer",
+      });
+
+      await uploadPaymentProof({
+        uid: user.uid,
+        paymentId,
+        file: proofFile,
+      });
+
+      setNextToast("Pagamento enviado com comprovativo. Vamos validar ✅", "success");
+      router.push("/payment/sent");
     } catch (e: any) {
-      setNextToast(e?.message || "Erro ao confirmar.", "error");
+      setNextToast(e?.message || "Erro ao enviar pagamento.", "error");
     } finally {
       setLoading(false);
     }
@@ -44,51 +63,70 @@ export default function BankPaymentPage() {
 
       <h1 className="mt-4 text-3xl font-extrabold tracking-tight">Transferência Bancária</h1>
       <p className="mt-2 text-gray-600">
-        Faz a transferência e coloca a referência exatamente como está abaixo.
+        Faz a transferência e envia já o comprovativo para ativarmos o teu plano.
       </p>
 
-      <div className="mt-8 rounded-3xl border border-gray-200 bg-white p-7 shadow-sm">
+      <div className="mt-8 rounded-3xl border border-blue-200 bg-white p-7 shadow-sm">
         <div className="text-sm text-gray-500">Plano</div>
-        <div className="text-lg font-bold">{plan === "annual" ? "PRO Anual" : "PRO Mensal"}</div>
+        <div className="text-lg font-bold">{plan === "annual" ? "Anual" : "Mensal"}</div>
 
-        <div className="mt-5 grid gap-4 md:grid-cols-2">
-          <div className="rounded-2xl bg-gray-50 p-4">
-            <div className="text-xs text-gray-500">Valor</div>
-            <div className="text-2xl font-extrabold">{amountDb} Db</div>
-          </div>
+        <div className="mt-5 rounded-2xl bg-blue-50 p-4">
+          <div className="text-xs text-blue-700">Valor</div>
+          <div className="text-2xl font-extrabold text-blue-700">{amountSTN} STN</div>
+        </div>
 
-          <div className="rounded-2xl bg-gray-50 p-4">
-            <div className="text-xs text-gray-500">Referência</div>
-            <div className="mt-1 break-all rounded-xl border bg-white px-3 py-2 font-mono text-sm">
-              {ref}
-            </div>
+        <div className="mt-6 rounded-2xl border border-blue-200 bg-blue-50 p-4 text-blue-900">
+          <div className="font-semibold">Dados bancários</div>
+          <div className="mt-2 text-sm">
+            Banco: <b>COLOCA AQUI</b><br />
+            NIB/Conta: <b>COLOCA AQUI</b><br />
+            Nome: <b>COLOCA AQUI</b><br />
           </div>
         </div>
 
-        <div className="mt-6 rounded-2xl border border-amber-200 bg-amber-50 p-4 text-amber-900">
-          <div className="font-semibold">Dados bancários</div>
-          <div className="mt-2 text-sm leading-6">
-            Banco: <b>BISTP</b><br />
-            Titular: <b>FELISBERTO DOS SANTOS DO NASCIMENTO</b><br />
-            Conta: <b>00477321710001</b><br />
-            NIB: <b>000200050477321710128</b><br />
-            IBAN: <b>ST23000200050477321710128</b><br />
-            SWIFT/BIC: <b>INOISTST</b>
-          </div>
+        <div className="mt-6">
+          <label className="mb-2 block text-sm font-semibold text-gray-800">
+            Comprovativo de pagamento
+          </label>
+          <input
+            type="file"
+            accept=".jpg,.jpeg,.png,.pdf,.webp"
+            onChange={(e) => setProofFile(e.target.files?.[0] || null)}
+            className="block w-full rounded-xl border border-gray-300 px-3 py-3 text-sm"
+          />
+          <p className="mt-2 text-xs text-gray-500">
+            Aceita imagem ou PDF.
+          </p>
         </div>
 
         <button
-          onClick={onPaid}
+          onClick={onConfirm}
           disabled={loading}
-          className="mt-7 w-full rounded-xl bg-emerald-600 py-3 text-sm font-semibold text-white hover:bg-emerald-700 disabled:opacity-60"
+          className="mt-7 w-full rounded-xl bg-blue-700 py-3 text-sm font-semibold text-white hover:bg-blue-800 disabled:opacity-60"
         >
-          {loading ? "A guardar..." : "Já fiz a transferência"}
+          {loading ? "A enviar..." : "Enviar pagamento com comprovativo"}
         </button>
 
         <p className="mt-3 text-xs text-gray-500">
-          Depois de confirmares, o plano fica “à espera de confirmação” e ativamos quando o pagamento entrar.
+          O teu pedido ficará pendente até validação do admin.
         </p>
       </div>
     </div>
+  );
+}
+
+export default function BankPaymentPage() {
+  return (
+    <Suspense
+      fallback={
+        <div className="mx-auto max-w-3xl px-6 py-14">
+          <div className="rounded-2xl border bg-white p-6 text-sm text-gray-600">
+            A carregar pagamento...
+          </div>
+        </div>
+      }
+    >
+      <BankPaymentContent />
+    </Suspense>
   );
 }
